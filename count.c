@@ -147,6 +147,7 @@ set_sortby(const char *sortby)
 	}
 }
 
+//Модификация значения оверхеда
 void set_overhead(int n)
 {
 	overhead.tv_sec = n / 1000000;

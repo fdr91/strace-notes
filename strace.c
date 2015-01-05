@@ -692,23 +692,23 @@ expand_tcbtab(void)
 	while (i < tcbtabsize)
 		tcbtab[i++] = newtcbs++;
 }
-
+//Добавляет заданный пид в отслеживаемые
 static struct tcb *
 alloctcb(int pid)
 {
 	int i;
-	struct tcb *tcp;
+	struct tcb *tcp;//Структура для процесса
 
-	if (nprocs == tcbtabsize)
+	if (nprocs == tcbtabsize)//Расширяем таблицу записей, если нужно
 		expand_tcbtab();
 
-	for (i = 0; i < tcbtabsize; i++) {
+	for (i = 0; i < tcbtabsize; i++) {//Ищем первую свободную запись в таблице процессов
 		tcp = tcbtab[i];
-		if (!tcp->pid) {
-			memset(tcp, 0, sizeof(*tcp));
-			tcp->pid = pid;
+		if (!tcp->pid) {//Если запись свободна
+			memset(tcp, 0, sizeof(*tcp));//Обнуляем поля в ней
+			tcp->pid = pid;//Ставим пид
 #if SUPPORTED_PERSONALITIES > 1
-			tcp->currpers = current_personality;
+			tcp->currpers = current_personality;//Ставим архитектуру
 #endif
 
 #ifdef USE_LIBUNWIND
@@ -716,13 +716,13 @@ alloctcb(int pid)
 				unwind_tcb_init(tcp);
 #endif
 
-			nprocs++;
-			if (debug_flag)
+			nprocs++;//Увееличиваем количество отслеживаемых процессов
+			if (debug_flag)//Вывод отладочной информации, если нужно
 				fprintf(stderr, "new tcb for pid %d, active tcbs:%d\n", tcp->pid, nprocs);
-			return tcp;
+			return tcp;//Возвращаем новую струтуру
 		}
 	}
-	error_msg_and_die("bug in alloctcb");
+	error_msg_and_die("bug in alloctcb");//Ошибка. Сюда мы попадат не должны
 }
 
 static void
@@ -930,6 +930,8 @@ detach(struct tcb *tcp)
 	droptcb(tcp);
 }
 
+//Парсит значение параметра -p. Пиды могут записываться группой и иметь различные разделители..
+//Добавляет заданные значения в
 static void
 process_opt_p_list(char *opt)
 {
@@ -939,22 +941,22 @@ process_opt_p_list(char *opt)
 		 * pidof uses space as delim, pgrep uses newline. :(
 		 */
 		int pid;
-		char *delim = opt + strcspn(opt, ", \n\t");
-		char c = *delim;
+		char *delim = opt + strcspn(opt, ", \n\t");//Поскольку пид может поступить из различных источинков, они могут иметь различные разделитли
+		char c = *delim;//c -- разделитель
 
-		*delim = '\0';
-		pid = string_to_uint(opt);
-		if (pid <= 0) {
+		*delim = '\0';//устанавливаем значение, лежащее в разделителе в 0
+		pid = string_to_uint(opt);//Берем первый пид
+		if (pid <= 0) {//Ошибка
 			error_msg_and_die("Invalid process id: '%s'", opt);
 		}
-		if (pid == strace_tracer_pid) {
-			error_msg_and_die("I'm sorry, I can't let you do that, Dave.");
+		if (pid == strace_tracer_pid) {//Сказали следить за самим собой
+			error_msg_and_die("I'm sorry, I can't let you do that, Dave.");//Кто такой Дейв? 38: David S. Miller <davem@caip.rutgers.edu> или Dr. David Alan Gilbert <dave@treblig.org>
 		}
 		*delim = c;
-		alloctcb(pid);
-		if (c == '\0')
+		alloctcb(pid);//Добавляем процесс с этим пидом в таблицу процессов
+		if (c == '\0')//Строка завершена
 			break;
-		opt = delim + 1;
+		opt = delim + 1;//Следующая запись
 	}
 }
 
@@ -1681,15 +1683,16 @@ init(int argc, char *argv[])
 		tcbtab[c] = tcp++;
 
 	shared_log = stderr;//shared_log инициализируется stderr
-	set_sortby(DEFAULT_SORTBY);//установка sortfun в значение по умолчанию
-	set_personality(DEFAULT_PERSONALITY);
-	qualify("trace=all");
-	qualify("abbrev=all");
-	qualify("verbose=all");
+	set_sortby(DEFAULT_SORTBY);//установка сортировки в значение по умолчанию (время)
+	set_personality(DEFAULT_PERSONALITY);//установка архитектуры в значение по умолчанию
+	qualify("trace=all");//Осуществлять отслеживание всего
+	qualify("abbrev=all");//Выводить аргументы в виде аббревиатур
+	qualify("verbose=all");//Выводить все
 #if DEFAULT_QUAL_FLAGS != (QUAL_TRACE | QUAL_ABBREV | QUAL_VERBOSE)
 # error Bug in DEFAULT_QUAL_FLAGS
 #endif
-	qualify("signal=all");
+	qualify("signal=all");//Отслеживание всех сигналов
+	//Парсинг опций
 	while ((c = getopt(argc, argv,
 		"+b:cCdfFhiqrtTvVwxyz"
 #ifdef USE_LIBUNWIND
@@ -1698,94 +1701,94 @@ init(int argc, char *argv[])
 		"D"
 		"a:e:o:O:p:s:S:u:E:P:I:")) != EOF) {
 		switch (c) {
-		case 'b':
+		case 'b': //Опция -b -- отсоединиться при указанном системном вызове
 			if (strcmp(optarg, "execve") != 0)
 				error_msg_and_die("Syscall '%s' for -b isn't supported",
 					optarg);
 			detach_on_execve = 1;
 			break;
-		case 'c':
+		case 'c': //Только подсчет параметров всех вызовов и вывод общей информации
 			if (cflag == CFLAG_BOTH) {
 				error_msg_and_die("-c and -C are mutually exclusive");
 			}
 			cflag = CFLAG_ONLY_STATS;
 			break;
-		case 'C':
+		case 'C': //то же, что и c+постоянный вывод текущей информации
 			if (cflag == CFLAG_ONLY_STATS) {
 				error_msg_and_die("-c and -C are mutually exclusive");
 			}
 			cflag = CFLAG_BOTH;
 			break;
-		case 'd':
+		case 'd'://Выводить отладочную информацию в stderr
 			debug_flag = 1;
 			break;
-		case 'D':
+		case 'D'://Флаг того, что процесс strace должен работать, как отсоединенные ребенок, а не как родитель
 			daemonized_tracer = 1;
 			break;
-		case 'F':
+		case 'F'://Опция, не представленная в Хэлпе
 			optF = 1;
 			break;
-		case 'f':
+		case 'f'://отслеживать потоки, которые появились после вызова fork
 			followfork++;
 			break;
-		case 'h':
+		case 'h': // вывод справки
 			usage(stdout, 0);
 			break;
-		case 'i':
+		case 'i'://Вывод значения instruction pointer в момент обращения к системному вызову
 			iflag = 1;
 			break;
-		case 'q':
+		case 'q': //Не выводить сообщения о присоединении/отсоединении процессов
 			qflag++;
 			break;
-		case 'r':
+		case 'r'://Печатать относительные таймстампы
 			rflag = 1;
 			/* fall through to tflag++ */
-		case 't':
+		case 't'://Абсолютные таймстампы
 			tflag++;
 			break;
-		case 'T':
+		case 'T'://Выводить время, проведенное в каждом вызове
 			Tflag = 1;
 			break;
-		case 'w':
+		case 'w'://Вывести суммарную задержку  системного вызова (summarise syscall latency)
 			count_wallclock = 1;
 			break;
-		case 'x':
+		case 'x'://печатать non-ascii строки в 16-ричном формате
 			xflag++;
 			break;
-		case 'y':
+		case 'y'://Выводить пути, ассоциированные с аргументами--файловыми дескрипторами
 			show_fd_path++;
 			break;
-		case 'v':
+		case 'v'://подробный вывод
 			qualify("abbrev=none");
 			break;
-		case 'V':
+		case 'V'://Вывести версию и выйти
 			printf("%s -- version %s\n", PACKAGE_NAME, VERSION);
 			exit(0);
 			break;
-		case 'z':
+		case 'z'://Опция не описана в Хэлпе
 			not_failing_only = 1;
 			break;
-		case 'a':
+		case 'a'://Установить ширину выравнивания столбцов при выводе
 			acolumn = string_to_uint(optarg);
 			if (acolumn < 0)
 				error_opt_arg(c, optarg);
 			break;
-		case 'e':
-			qualify(optarg);
+		case 'e'://Строка для модификации флагов в массиве qual_vec option=[!]all or option=[!]val1[,val2]
+			qualify(optarg);//Модификация флаго в соответствии со строкой
 			break;
-		case 'o':
+		case 'o': //Вывод в файл
 			outfname = strdup(optarg);
 			break;
-		case 'O':
+		case 'O': //установка оверхеда при отслеживании вызовов в микросекундах
 			i = string_to_uint(optarg);
 			if (i < 0)
 				error_opt_arg(c, optarg);
 			set_overhead(i);
 			break;
-		case 'p':
-			process_opt_p_list(optarg);
+		case 'p'://Производить отслеживание для указанного пида
+			process_opt_p_list(optarg);//Парсит значение параметра. Пиды могут записываться группой и иметь различные разделители...
 			break;
-		case 'P':
+		case 'P'://Отслеживать доступы к указанному пути
 			pathtrace_select(optarg);
 			break;
 		case 's':

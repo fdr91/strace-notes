@@ -41,15 +41,16 @@ static unsigned num_selected = 0;
 
 /*
  * Return true if specified path matches one that we're tracing.
+ * Возвращает true, если указанный путь уже в таблице путей
  */
 static int
 pathmatch(const char *path)
 {
 	unsigned i;
 
-	for (i = 0; i < num_selected; ++i) {
+	for (i = 0; i < num_selected; ++i) {//Проверяем таблицу путей, ищем совпадение
 		if (strcmp(path, paths_selected[i]) == 0)
-			return 1;
+			return 1;//Наидено -- возвращаем 1
 	}
 	return 0;
 }
@@ -79,8 +80,8 @@ fdmatch(struct tcb *tcp, int fd)
 }
 
 /*
- * Add a path to the set we're tracing.
- * Specifying NULL will delete all paths.
+ * Добавить путь в отслеживаемые
+ * Если в качестве параметра указать NULL -- удалит все пути
  */
 static void
 storepath(const char *path)
@@ -88,13 +89,13 @@ storepath(const char *path)
 	unsigned i;
 
 	if (pathmatch(path))
-		return; /* already in table */
+		return; /*Уже в таблице */
 
-	i = num_selected++;
-	paths_selected = realloc(paths_selected, num_selected * sizeof(paths_selected[0]));
-	if (!paths_selected)
+	i = num_selected++;//i -- индекс, куда будет добавлен путь, ставим его в конец
+	paths_selected = realloc(paths_selected, num_selected * sizeof(paths_selected[0]));//Выделение дополнительной памяти
+	if (!paths_selected)//Ошибка
 		die_out_of_memory();
-	paths_selected[i] = path;
+	paths_selected[i] = path;//Записываем путь в конец
 }
 
 /*
@@ -123,28 +124,30 @@ getfdpath(struct tcb *tcp, int fd, char *buf, unsigned bufsize)
 /*
  * Add a path to the set we're tracing.  Also add the canonicalized
  * version of the path.  Secifying NULL will delete all paths.
+ * Добавить путь в отслеживаемые.
+ * Добавляет не только указанный в параметрах путь, но и его каноническое абсолютное имя
  */
 void
 pathtrace_select(const char *path)
 {
 	char *rpath;
 
-	storepath(path);
+	storepath(path);//Сохранить путь
 
-	rpath = realpath(path, NULL);
+	rpath = realpath(path, NULL);//Возвращает каноническое абсолютное имя указанного пути
 
-	if (rpath == NULL)
+	if (rpath == NULL)//Ошибка в realpath
 		return;
 
-	/* if realpath and specified path are same, we're done */
+	/* Если передан канонический путь, то второй раз добавляться в таблицу не будет*/
 	if (strcmp(path, rpath) == 0) {
 		free(rpath);
 		return;
 	}
 
-	fprintf(stderr, "Requested path '%s' resolved into '%s'\n",
+	fprintf(stderr, "Requested path '%s' resolved into '%s'\n", //Вывод сообщения о том, что найдено каноническое имя
 		path, rpath);
-	storepath(rpath);
+	storepath(rpath);//Сохранить канонический путь
 }
 
 /*
