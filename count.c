@@ -131,19 +131,20 @@ count_cmp(void *a, void *b)
 static int (*sortfun)();
 static struct timeval overhead = { -1, -1 };
 
+/*Установить поле, по которому будет производиться сортировка вызовов: time, calls, name, nothing (default time)*/
 void
 set_sortby(const char *sortby)
 {
-	if (strcmp(sortby, "time") == 0)
+	if (strcmp(sortby, "time") == 0)//По времени
 		sortfun = time_cmp;
-	else if (strcmp(sortby, "calls") == 0)
+	else if (strcmp(sortby, "calls") == 0)//По количеству вызовов
 		sortfun = count_cmp;
-	else if (strcmp(sortby, "name") == 0)
+	else if (strcmp(sortby, "name") == 0)//По имени
 		sortfun = syscall_cmp;
-	else if (strcmp(sortby, "nothing") == 0)
+	else if (strcmp(sortby, "nothing") == 0)//Не сортировать
 		sortfun = NULL;
 	else {
-		error_msg_and_die("invalid sortby: '%s'", sortby);
+		error_msg_and_die("invalid sortby: '%s'", sortby);//Неверное значение
 	}
 }
 

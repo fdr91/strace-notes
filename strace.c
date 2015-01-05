@@ -83,7 +83,7 @@ bool debug_flag = 0;
 bool Tflag = 0;
 bool iflag = 0;
 bool count_wallclock = 0;
-unsigned int qflag = 0;
+unsigned int qflag = 0;//Флаг того, что не нужно выводить сообщения о присоединении/отсоединении процессов
 /* Which WSTOPSIG(status) value marks syscall traps? */
 static unsigned int syscall_trap_sig = SIGTRAP;
 static unsigned int tflag = 0;
@@ -91,6 +91,7 @@ static bool rflag = 0;
 static bool print_pid_pfx = 0;
 
 /* -I n */
+//Используется для opt_intr
 enum {
     INTR_NOT_SET        = 0,
     INTR_ANYWHERE       = 1, /* don't block/ignore any signals */
@@ -99,7 +100,7 @@ enum {
     INTR_BLOCK_TSTP_TOO = 4, /* block fatal signals and SIGTSTP (^Z) */
     NUM_INTR_OPTS
 };
-static int opt_intr;
+static int opt_intr; //Значение опции -I -- она отвечает за блокироваку сигналов
 /* We play with signal mask only if this mode is active: */
 #define interactive (opt_intr == INTR_WHILE_WAIT)
 
@@ -133,7 +134,7 @@ unsigned int show_fd_path = 0;
 
 static bool detach_on_execve = 0;
 /* Are we "strace PROG" and need to skip detach on first execve? */
-static bool skip_one_b_execve = 0;
+static bool skip_one_b_execve = 0; //Флаг того, что strace вызван как strace PROG  и мы должны скрыть отсоединение при первом вызове execve
 /* Are we "strace PROG" and need to hide everything until execve? */
 bool hide_log_until_execve = 0;
 
@@ -339,24 +340,25 @@ void die_out_of_memory(void)
 	recursed = 1;
 	error_msg_and_die("Out of memory");//Вывод сообщения об ошибке и выход
 }
-
-static void//Ошибка: неверноен значение аргумента
+/*Ошибка при парсинге опций. Выводит сообщение об ошибке и завершает работу программы*/
+static void
 error_opt_arg(int opt, const char *arg)
 {
 	error_msg_and_die("Invalid -%c argument: '%s'", opt, arg);//Вывод сообщения об ошибке и выход
 }
 
 #if USE_SEIZE
+/*Присоединить ptrace к pid */
 static int
 ptrace_attach_or_seize(int pid)
 {
 	int r;
 	if (!use_seize)
-		return ptrace(PTRACE_ATTACH, pid, 0L, 0L);
-	r = ptrace(PTRACE_SEIZE, pid, 0L, (unsigned long)ptrace_setoptions);
+		return ptrace(PTRACE_ATTACH, pid, 0L, 0L);//Присоедениться к процессу, сделав его tracee и остановить его
+	r = ptrace(PTRACE_SEIZE, pid, 0L, (unsigned long)ptrace_setoptions);//Присоединиться к процессу, но не останавливать его
 	if (r)
 		return r;
-	r = ptrace(PTRACE_INTERRUPT, pid, 0L, 0L);
+	r = ptrace(PTRACE_INTERRUPT, pid, 0L, 0L);//Остановить отслеживаемый процесс, в случае, если не удалось к нему присоединиться
 	return r;
 }
 #else
@@ -432,26 +434,27 @@ set_cloexec_flag(int fd)
 
 	fcntl(fd, F_SETFD, newflags); /* never fails */
 }
-
+/*Убить процесс с сохранение номера ошибки*/
 static void kill_save_errno(pid_t pid, int sig)
 {
-	int saved_errno = errno;
+	int saved_errno = errno;//Сохраняем номер ошибки
 
-	(void) kill(pid, sig);
-	errno = saved_errno;
+	(void) kill(pid, sig);//Убиваем процесс
+	errno = saved_errno;//Возвращаем сохраненную ошибку на место
 }
 
 /*
- * When strace is setuid executable, we have to swap uids
- * before and after filesystem and process management operations.
+ * Если strace запущен с опцией -u, нужно поменять местами uid и euid
+ * перед тем и после того, как, как будут произведены операции с файловой системой
+ * и операции, связанные с управлением процессами
  */
 static void
 swap_uid(void)
 {
 	int euid = geteuid(), uid = getuid();
 
-	if (euid != uid && setreuid(euid, uid) < 0) {
-		perror_msg_and_die("setreuid");
+	if (euid != uid && setreuid(euid, uid) < 0) {//Устанавливаем real and effective user IDs
+		perror_msg_and_die("setreuid");//Ошибка
 	}
 }
 
@@ -476,19 +479,19 @@ swap_uid(void)
 # define struct_rlimit struct rlimit
 # define set_rlimit setrlimit
 #endif
-
+/*Функция для открытия файла path для вывода*/
 static FILE *
 strace_fopen(const char *path)
 {
-	FILE *fp;
+	FILE *fp;//Струтура для хранения файла
 
-	swap_uid();
-	fp = fopen_for_output(path, "w");
-	if (!fp)
+	swap_uid(); // меняем uid и euid
+	fp = fopen_for_output(path, "w");//
+	if (!fp)//Не получилось открыть файл
 		perror_msg_and_die("Can't fopen '%s'", path);
-	swap_uid();
+	swap_uid();//меняем id обратно
 	set_cloexec_flag(fileno(fp));
-	return fp;
+	return fp;//Возвращаем файл
 }
 
 static int popen_pid = 0;
@@ -666,11 +669,11 @@ tabto(void)
 static void
 newoutf(struct tcb *tcp)
 {
-	tcp->outf = shared_log; /* if not -ff mode, the same file is for all */
-	if (followfork >= 2) {
+	tcp->outf = shared_log; /* если не было опции -ff у всех процессов будет один лог*/
+	if (followfork >= 2) {//Если была указана опция ff генерируем имя файла в соответствии с pid-ом процесса и открываем файл на запись
 		char name[520 + sizeof(int) * 3];
 		sprintf(name, "%.512s.%u", outfname, tcp->pid);
-		tcp->outf = strace_fopen(name);
+		tcp->outf = strace_fopen(name);//
 	}
 }
 
@@ -1108,21 +1111,20 @@ struct exec_params {
 	char **argv;
 	char *pathname;
 };
-static struct exec_params params_for_tracee;
-static void __attribute__ ((noinline, noreturn))
+static struct exec_params params_for_tracee; //Параметры отслеживаемого процесса
 exec_or_die(void)
 {
 	struct exec_params *params = &params_for_tracee;
 
-	if (params->fd_to_close >= 0)
+	if (params->fd_to_close >= 0)//Если пишем не в stderr, файловый дескриптор fd_to_close нужно закрыть, чтобы в него писал трэйсер
 		close(params->fd_to_close);
-	if (!daemonized_tracer && !use_seize) {
-		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0) {
+	if (!daemonized_tracer && !use_seize) {//Если не была указана опция -D,
+		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0) {//Говорим ptrace, что мы -- процесс, который будет отслежваться своим родителем
 			perror_msg_and_die("ptrace(PTRACE_TRACEME, ...)");
 		}
 	}
 
-	if (username != NULL) {
+	if (username != NULL) {//Случай, когда указано имя пользователя, от имени которого нужно будет запустить процесс
 		/*
 		 * It is important to set groups before we
 		 * lose privileges on setuid.
@@ -1163,23 +1165,23 @@ exec_or_die(void)
 	execv(params->pathname, params->argv);
 	perror_msg_and_die("exec");
 }
-
+/*Функция для старта дочернего процесса, если strace вызван путем strace FILE*/
 static void
 startup_child(char **argv)
 {
-	struct_stat statbuf;
-	const char *filename;
-	char pathname[MAXPATHLEN];
-	int pid;
+	struct_stat statbuf;//Структура для храниния информации о файлу
+	const char *filename;//Имя файла
+	char pathname[MAXPATHLEN];//Путь
+	int pid;//Пид дочернего процесса
 	struct tcb *tcp;
 
-	filename = argv[0];
-	if (strchr(filename, '/')) {
-		if (strlen(filename) > sizeof pathname - 1) {
+	filename = argv[0];//
+	if (strchr(filename, '/')) {//Если имя файла содержит резделители
+		if (strlen(filename) > sizeof pathname - 1) {//Ошибка: слишком длинное имя файла
 			errno = ENAMETOOLONG;
 			perror_msg_and_die("exec");
 		}
-		strcpy(pathname, filename);
+		strcpy(pathname, filename);//Копируем имя в pathname
 	}
 #ifdef USE_DEBUGGING_EXEC
 	/*
@@ -1190,19 +1192,19 @@ startup_child(char **argv)
 	else if (stat_file(filename, &statbuf) == 0)
 		strcpy(pathname, filename);
 #endif /* USE_DEBUGGING_EXEC */
-	else {
+	else {//Если имя файла не содержит резделители
 		const char *path;
 		int m, n, len;
-
+		//Производится поиск filename в PATH
 		for (path = getenv("PATH"); path && *path; path += m) {
-			const char *colon = strchr(path, ':');
+			const char *colon = strchr(path, ':');//Берем очередную запись из PATH
 			if (colon) {
 				n = colon - path;
 				m = n + 1;
 			}
 			else
 				m = n = strlen(path);
-			if (n == 0) {
+			if (n == 0) {//Проверяем, был ли получено правильный путь
 				if (!getcwd(pathname, MAXPATHLEN))
 					continue;
 				len = strlen(pathname);
@@ -1210,29 +1212,30 @@ startup_child(char **argv)
 			else if (n > sizeof pathname - 1)
 				continue;
 			else {
-				strncpy(pathname, path, n);
+				strncpy(pathname, path, n);//Копируем текущую запись в pathname
 				len = n;
 			}
-			if (len && pathname[len - 1] != '/')
+			if (len && pathname[len - 1] != '/') //Добавляем /, если требуется
 				pathname[len++] = '/';
-			strcpy(pathname + len, filename);
-			if (stat_file(pathname, &statbuf) == 0 &&
+			strcpy(pathname + len, filename);//конкатенируем pathname и filename
+			if (stat_file(pathname, &statbuf) == 0 && //Проверяем существует ли файл
 			    /* Accept only regular files
 			       with some execute bits set.
 			       XXX not perfect, might still fail */
-			    S_ISREG(statbuf.st_mode) &&
-			    (statbuf.st_mode & 0111))
+			    S_ISREG(statbuf.st_mode) && //Если файл существует, и он не является ссылкой
+			    (statbuf.st_mode & 0111))//И к нему есть доступ, заканчиваем цикл
 				break;
 		}
 	}
 	if (stat_file(pathname, &statbuf) < 0) {
-		perror_msg_and_die("Can't stat '%s'", filename);
+		perror_msg_and_die("Can't stat '%s'", filename);//Ошибка. Файл не найден
 	}
 
-	params_for_tracee.fd_to_close = (shared_log != stderr) ? fileno(shared_log) : -1;
-	params_for_tracee.run_euid = (statbuf.st_mode & S_ISUID) ? statbuf.st_uid : run_uid;
-	params_for_tracee.run_egid = (statbuf.st_mode & S_ISGID) ? statbuf.st_gid : run_gid;
-	params_for_tracee.argv = argv;
+	//Модифицируем параметры процесса, который будет отслеживаться
+	params_for_tracee.fd_to_close = (shared_log != stderr) ? fileno(shared_log) : -1; //Запоминаем файловый дескриптор, если не сказано писать лог в stderr
+	params_for_tracee.run_euid = (statbuf.st_mode & S_ISUID) ? statbuf.st_uid : run_uid; //Запоминаем нужный uid
+	params_for_tracee.run_egid = (statbuf.st_mode & S_ISGID) ? statbuf.st_gid : run_gid;//Запоминаем нужный gid
+	params_for_tracee.argv = argv; //Запоминаем argv
 	/*
 	 * On NOMMU, can be safely freed only after execve in tracee.
 	 * It's hard to know when that happens, so we just leak it.
@@ -1240,41 +1243,44 @@ startup_child(char **argv)
 	params_for_tracee.pathname = NOMMU_SYSTEM ? strdup(pathname) : pathname;
 
 #if defined HAVE_PRCTL && defined PR_SET_PTRACER && defined PR_SET_PTRACER_ANY
-	if (daemonized_tracer)
+	if (daemonized_tracer)//Если была указана опция -D (трейсер--демон), необходимо установить нужные разрешения безопасности, чтобы ptrace могла получить доступ к текущему процессу
+		 //prctl - operations on a process
 		prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY);
+
 #endif
 
-	pid = fork();
-	if (pid < 0) {
+	pid = fork();//Создаем процесс-копию
+	if (pid < 0) {//Произошла ошибка
 		perror_msg_and_die("fork");
 	}
-	if ((pid != 0 && daemonized_tracer)
-	 || (pid == 0 && !daemonized_tracer)
+	if ((pid != 0 && daemonized_tracer)//Если мы находимся в процессе родителе и указана опция -D
+	 || (pid == 0 && !daemonized_tracer)//или если мы находимся в процесс-ребенке и опция -D не указана
 	) {
 		/* We are to become the tracee. Two cases:
 		 * -D: we are parent
 		 * not -D: we are child
 		 */
-		exec_or_die();
+		//Текущий процесс будет отслеживаемым
+		exec_or_die(); //Запускаем программу, которая будет отслеживаться
 	}
 
-	/* We are the tracer */
+	/* Этот процесс является трейсером*/
 
-	if (!daemonized_tracer) {
-		strace_child = pid;
+	if (!daemonized_tracer) {//В процессе-трейсере
+		strace_child = pid; //Запоминаем pid ребенка
 		if (!use_seize) {
 			/* child did PTRACE_TRACEME, nothing to do in parent */
 		} else {
 			if (!NOMMU_SYSTEM) {
-				/* Wait until child stopped itself */
+				/* Ожидаем, пока ребенок закончит работу */
 				int status;
 				while (waitpid(pid, &status, WSTOPPED) < 0) {
 					if (errno == EINTR)
-						continue;
-					perror_msg_and_die("waitpid");
+						continue;//Продолжаем ждать, если возникла ошибка EINTR
+					perror_msg_and_die("waitpid"); //Ошибка
 				}
-				if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP) {
-					kill_save_errno(pid, SIGKILL);
+				if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP) {//Проверка корректности завершения дочернего процесса
+					kill_save_errno(pid, SIGKILL);//Если процесс не завершился корректно, убиваем его с сохранением ошибки
 					perror_msg_and_die("Unexpected wait status %x", status);
 				}
 			}
@@ -1283,26 +1289,26 @@ startup_child(char **argv)
 			 * This means that we may miss a few first syscalls...
 			 */
 
-			if (ptrace_attach_or_seize(pid)) {
-				kill_save_errno(pid, SIGKILL);
+			if (ptrace_attach_or_seize(pid)) {//Присоединиться к процессу ребенку ptrace-ом и остановить его
+				kill_save_errno(pid, SIGKILL);//убиваем ребенка с сохранением ошибки, если он не был остановлен командой из условия
 				perror_msg_and_die("Can't attach to %d", pid);
 			}
 			if (!NOMMU_SYSTEM)
-				kill(pid, SIGCONT);
+				kill(pid, SIGCONT);//Убиваем процесс-ребенок
 		}
-		tcp = alloctcb(pid);
-		if (!NOMMU_SYSTEM)
-			tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
+		tcp = alloctcb(pid);//Добавляем созданный пид в список отслеживаемых
+		if (!NOMMU_SYSTEM)//Записываем нужные флаги в информацию о процессе
+			tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;//
 		else
 			tcp->flags |= TCB_ATTACHED | TCB_STARTUP;
-		newoutf(tcp);
+		newoutf(tcp);//Открываем лог для вновь созданного процесса
 	}
 	else {
-		/* With -D, we are *child* here, IOW: different pid. Fetch it: */
-		strace_tracer_pid = getpid();
-		/* The tracee is our parent: */
+		/* C опцией -D, сюда попадает процесс -- *ребенок*, IOW: имеем другой пид pid. */
+		strace_tracer_pid = getpid();//запоминаем свой пид
+		/* Отслеживаемый процесс -- наш родитель: */
 		pid = getppid();
-		alloctcb(pid);
+		alloctcb(pid);//Присоединение будет осуществлено позже. Выделяем для отслеживаемого процесса запись в таблице
 		/* attaching will be done later, by startup_attach */
 		/* note: we don't do newoutf(tcp) here either! */
 
@@ -1597,25 +1603,26 @@ test_ptrace_seize(void)
 # define test_ptrace_seize() ((void)0)
 #endif
 
+/*Возвращает номер релиза системы*/
 static unsigned
 get_os_release(void)
 {
 	unsigned rel;
 	const char *p;
 	struct utsname u;
-	if (uname(&u) < 0)
+	if (uname(&u) < 0)//Пишем релиз в струтуру u
 		perror_msg_and_die("uname");
-	/* u.release has this form: "3.2.9[-some-garbage]" */
+	/* u.release имеет следующую форму: "3.2.9[-some-garbage]" */
 	rel = 0;
 	p = u.release;
 	for (;;) {
-		if (!(*p >= '0' && *p <= '9'))
+		if (!(*p >= '0' && *p <= '9'))//Ошибка в случае неправильного номера релиза
 			error_msg_and_die("Bad OS release string: '%s'", u.release);
 		/* Note: this open-codes KERNEL_VERSION(): */
-		rel = (rel << 8) | atoi(p);
+		rel = (rel << 8) | atoi(p);//добавляем очередные разряды в rel
 		if (rel >= KERNEL_VERSION(1,0,0))
 			break;
-		while (*p >= '0' && *p <= '9')
+		while (*p >= '0' && *p <= '9')//Пропускаем нечисловые символы
 			p++;
 		if (*p != '.') {
 			if (rel >= KERNEL_VERSION(0,1,0)) {
@@ -1625,7 +1632,7 @@ get_os_release(void)
 			}
 			error_msg_and_die("Bad OS release string: '%s'", u.release);
 		}
-		p++;
+		p++;//Переходим к следующему символу
 	}
 	return rel;
 }
@@ -1725,7 +1732,7 @@ init(int argc, char *argv[])
 		case 'D'://Флаг того, что процесс strace должен работать, как отсоединенные ребенок, а не как родитель
 			daemonized_tracer = 1;
 			break;
-		case 'F'://Опция, не представленная в Хэлпе
+		case 'F'://То же самое, что и f
 			optF = 1;
 			break;
 		case 'f'://отслеживать потоки, которые появились после вызова fork
@@ -1791,16 +1798,16 @@ init(int argc, char *argv[])
 		case 'P'://Отслеживать доступы к указанному пути
 			pathtrace_select(optarg);
 			break;
-		case 's':
+		case 's'://Установка максимальной длины печатаемой строки
 			i = string_to_uint(optarg);
-			if (i < 0)
+			if (i < 0)//Ошибка
 				error_opt_arg(c, optarg);
 			max_strlen = i;
 			break;
-		case 'S':
+		case 'S'://Установить поле, по которому будет производиться сортировка вызовов: time, calls, name, nothing (default time)
 			set_sortby(optarg);
 			break;
-		case 'u':
+		case 'u'://Запускать команду от имени пользователя
 			username = strdup(optarg);
 			break;
 #ifdef USE_LIBUNWIND
@@ -1808,48 +1815,56 @@ init(int argc, char *argv[])
 			stack_trace_enabled = true;
 			break;
 #endif
-		case 'E':
+		case 'E'://Добавить переменную среды с указанным значением или удалить
 			if (putenv(optarg) < 0)
 				die_out_of_memory();
 			break;
-		case 'I':
+		case 'I': /*  Блокировать указанные сигналы при работе в указанных случаях
+					   1: no signals are blocked
+					   2: fatal signals are blocked while decoding syscall (default)
+					   3: fatal signals are always blocked (default if '-o FILE PROG')
+					   4: fatal signals and SIGTSTP (^Z) are always blocked
+		 	 	 	 */
 			opt_intr = string_to_uint(optarg);
-			if (opt_intr <= 0 || opt_intr >= NUM_INTR_OPTS)
+			if (opt_intr <= 0 || opt_intr >= NUM_INTR_OPTS)//Ошибка
 				error_opt_arg(c, optarg);
 			break;
 		default:
-			usage(stderr, 1);
+			usage(stderr, 1);//Если опция не найдена -- вывести справку
 			break;
 		}
 	}
-	argv += optind;
+	argv += optind;//Добавить optind--индекс следующей опции в argv
 	/* argc -= optind; - no need, argc is not used below */
 
-	acolumn_spaces = malloc(acolumn + 1);
+	acolumn_spaces = malloc(acolumn + 1);//Выделения памяти для массива с пробелами, который используется для выравнивания колонок
 	if (!acolumn_spaces)
 		die_out_of_memory();
-	memset(acolumn_spaces, ' ', acolumn);
+	memset(acolumn_spaces, ' ', acolumn);//Инициализация массива с пробелами, который используется для выравнивания колонок
 	acolumn_spaces[acolumn] = '\0';
 
 	/* Must have PROG [ARGS], or -p PID. Not both. */
-	if (!argv[0] == !nprocs)
+	if (!argv[0] == !nprocs)//Ошибка при указании несовместимых аргументов
 		usage(stderr, 1);
 
-	if (nprocs != 0 && daemonized_tracer) {
+	if (nprocs != 0 && daemonized_tracer) {//Ошибка при указании несовместимых аргументов
 		error_msg_and_die("-D and -p are mutually exclusive");
 	}
 
+	//Если опция -f была не указана, а было указано F
 	if (!followfork)
 		followfork = optF;
 
+	//Ошибка при указании несовместимых аргументов
 	if (followfork >= 2 && cflag) {
 		error_msg_and_die("(-c or -C) and -ff are mutually exclusive");
 	}
 
+	//Ошибка: не указан с, хотя указан w
 	if (count_wallclock && !cflag) {
 		error_msg_and_die("-w must be given with (-c or -C)");
 	}
-
+	//Вывод сообщений о том, что какие-то опции не оказывают ни какого влияния
 	if (cflag == CFLAG_ONLY_STATS) {
 		if (iflag)
 			error_msg("-%c has no effect with -c", 'i');
@@ -1872,23 +1887,23 @@ init(int argc, char *argv[])
 		unwind_init();
 #endif
 
-	/* See if they want to run as another user. */
+	/* Требуется ли запуск от имени другого пользователя?. */
 	if (username != NULL) {
 		struct passwd *pent;
 
-		if (getuid() != 0 || geteuid() != 0) {
+		if (getuid() != 0 || geteuid() != 0) { //Если требуется и программа запущена не от имени рута--ошибка
 			error_msg_and_die("You must be root to use the -u option");
 		}
-		pent = getpwnam(username);
-		if (pent == NULL) {
+		pent = getpwnam(username);//Ищем указанного пользователя
+		if (pent == NULL) {//Если не нашли -- ошибка
 			error_msg_and_die("Cannot find user '%s'", username);
 		}
-		run_uid = pent->pw_uid;
-		run_gid = pent->pw_gid;
+		run_uid = pent->pw_uid; //Запуск от имени uid
+		run_gid = pent->pw_gid;	//Запуск от имени guid
 	}
 	else {
-		run_uid = getuid();
-		run_gid = getgid();
+		run_uid = getuid(); //Если username не указан -- запускаем от того пользователя, который запустил strace
+		run_gid = getgid(); //и от его группы
 	}
 
 	/*
@@ -1901,85 +1916,89 @@ init(int argc, char *argv[])
 	need_fork_exec_workarounds |= test_ptrace_setoptions_for_all();
 	test_ptrace_seize();
 
-	/* Check if they want to redirect the output. */
+	/* Нужно ли перенаправлять вывод в файл?*/
 	if (outfname) {
-		/* See if they want to pipe the output. */
+		/* Если указан pipe */
 		if (outfname[0] == '|' || outfname[0] == '!') {
 			/*
-			 * We can't do the <outfname>.PID funny business
-			 * when using popen, so prohibit it.
+			 * Мы не сможем выводить в файл <outfname>.PID,
+			 * если нужно выводить в пайп
 			 */
-			if (followfork >= 2)
+			if (followfork >= 2)//Ошибка
 				error_msg_and_die("Piping the output and -ff are mutually exclusive");
-			shared_log = strace_popen(outfname + 1);
+			shared_log = strace_popen(outfname + 1);//Открываем лог
 		}
-		else if (followfork < 2)
+		else if (followfork < 2)//Открываем лог
 			shared_log = strace_fopen(outfname);
 	} else {
-		/* -ff without -o FILE is the same as single -f */
+		/* -ff без -o FILE -- то же самое, что -f */
 		if (followfork >= 2)
 			followfork = 1;
 	}
-
+	//Если не указано имя для файла, если открыт пайп
 	if (!outfname || outfname[0] == '|' || outfname[0] == '!') {
-		char *buf = malloc(BUFSIZ);
-		if (!buf)
+		char *buf = malloc(BUFSIZ);//Выделяем память под буфер
+		if (!buf)//Ошибка
 			die_out_of_memory();
 		setvbuf(shared_log, buf, _IOLBF, BUFSIZ);
 	}
+	//Если указано, что лог нужно сохранять в файл и указано имя программы для запуска
 	if (outfname && argv[0]) {
-		if (!opt_intr)
+		if (!opt_intr)//Устанавливаем флаг реакции на сигналы -- никода не прерываться, если до этого он не установлен в !0
 			opt_intr = INTR_NEVER;
-		qflag = 1;
+		qflag = 1;//Ставим флаг того, что не нужно выводить сообщения о присоединении/отсоединении процессов
 	}
-	if (!opt_intr)
-		opt_intr = INTR_WHILE_WAIT;
+	if (!opt_intr) //Если если до этого opt_intr не установлен в !0
+		opt_intr = INTR_WHILE_WAIT;//Ставим значение по умолчанию
 
+	//В целом, opt_intr выбирается по следующему правилу
 	/* argv[0]	-pPID	-oFILE	Default interactive setting
-	 * yes		0	0	INTR_WHILE_WAIT
-	 * no		1	0	INTR_WHILE_WAIT
-	 * yes		0	1	INTR_NEVER
-	 * no		1	1	INTR_WHILE_WAIT
+	 * yes		  0			0	INTR_WHILE_WAIT
+	 * no		  1			0	INTR_WHILE_WAIT
+	 * yes		  0			1	INTR_NEVER
+	 * no		  1			1	INTR_WHILE_WAIT
 	 */
 
-	sigemptyset(&empty_set);
-	sigemptyset(&blocked_set);
+	sigemptyset(&empty_set);//инициализирует набор сигналов empty_set, и "очищает" его от всех сигналов
+	sigemptyset(&blocked_set);//инициализирует набор сигналов blocked_set, и "очищает" его от всех сигналов
 
-	/* startup_child() must be called before the signal handlers get
-	 * installed below as they are inherited into the spawned process.
-	 * Also we do not need to be protected by them as during interruption
-	 * in the startup_child() mode we kill the spawned process anyway.
+	/*
+	 * startup_child() должна быть вызвана до того, как обработчики сигналов
+	 * получат какие-то значения, чтобы эти обработчики не унаследовались порожденным
+	 * процессом
+	 * Кроме того, какие-то особенные оброботчики нам не требуются, поскольку в процессе работы
+	 * startup_child() мы убьем порожденные процессы, если это потребуется в любом случае
 	 */
 	if (argv[0]) {
-		if (!NOMMU_SYSTEM || daemonized_tracer)
+		if (!NOMMU_SYSTEM || daemonized_tracer)//Если указана опция -D (NOMMU_SYSTEM в моей системе всегда 0)
 			hide_log_until_execve = 1;
-		skip_one_b_execve = 1;
-		startup_child(argv);
+		skip_one_b_execve = 1; //Флаг того, что strace вызван как strace PROG  и мы должны скрыть отсоединение при первом вызове execve
+		startup_child(argv); //Запуск дочернего процессора
 	}
-
+	//Ставим обработчик на SIG_IGN
 	sa.sa_handler = SIG_IGN;
-	sigemptyset(&sa.sa_mask);
+	sigemptyset(&sa.sa_mask);//инициализирует набор сигналов, которые должны быть заблокированы в ходе обработке данного и удаляет из них все записи
 	sa.sa_flags = 0;
-	sigaction(SIGTTOU, &sa, NULL); /* SIG_IGN */
-	sigaction(SIGTTIN, &sa, NULL); /* SIG_IGN */
-	if (opt_intr != INTR_ANYWHERE) {
-		if (opt_intr == INTR_BLOCK_TSTP_TOO)
+	sigaction(SIGTTOU, &sa, NULL); /* SIG_IGN на SIGTTOU */
+	sigaction(SIGTTIN, &sa, NULL); /* SIG_IGN на SIGTTOU*/
+	if (opt_intr != INTR_ANYWHERE) {//Если нужно блокировать какие-то сигналы
+		if (opt_intr == INTR_BLOCK_TSTP_TOO)//Если нужно блокировать fatal signals и SIGTSTP
 			sigaction(SIGTSTP, &sa, NULL); /* SIG_IGN */
 		/*
-		 * In interactive mode (if no -o OUTFILE, or -p PID is used),
-		 * fatal signals are blocked while syscall stop is processed,
-		 * and acted on in between, when waiting for new syscall stops.
-		 * In non-interactive mode, signals are ignored.
+		 * В интерактивном режиме (не использваны опции -o OUTFILE, или -p PID)
+		 * Фатальные сигналы блокируются до того, как будет обработано очередное завершение системного вызова
+		 * И не блокируются между его обработкой, когда происходит ожидание окончания какого-либо системного вызова
+		 * В неинтерактивном режиме сигналы игнорируются
 		 */
-		if (opt_intr == INTR_WHILE_WAIT) {
+		if (opt_intr == INTR_WHILE_WAIT) {//Добавляем указанные сигналы в blocked_set, если указана соответсвтующая опция
 			sigaddset(&blocked_set, SIGHUP);
 			sigaddset(&blocked_set, SIGINT);
 			sigaddset(&blocked_set, SIGQUIT);
 			sigaddset(&blocked_set, SIGPIPE);
 			sigaddset(&blocked_set, SIGTERM);
-			sa.sa_handler = interrupt;
+			sa.sa_handler = interrupt;//Ставим обработчик, который прерывает работу
 		}
-		/* SIG_IGN, or set handler for these */
+		/* Ставим обработчики сигналов*/
 		sigaction(SIGHUP, &sa, NULL);
 		sigaction(SIGINT, &sa, NULL);
 		sigaction(SIGQUIT, &sa, NULL);
@@ -1989,10 +2008,10 @@ init(int argc, char *argv[])
 	if (nprocs != 0 || daemonized_tracer)
 		startup_attach();
 
-	/* Do we want pids printed in our -o OUTFILE?
-	 * -ff: no (every pid has its own file); or
-	 * -f: yes (there can be more pids in the future); or
-	 * -p PID1,PID2: yes (there are already more than one pid)
+	/* Нужно ли писать пиды в -o OUTFILE?
+	 * -ff: нет (каждый  pid пишет в свой файл);
+	 * -f: да (возможно, в будущем появятся новые пиды)
+	 * -p PID1,PID2: да (уже сейчас идет работа с несколькими пидами
 	 */
 	print_pid_pfx = (outfname && followfork < 2 && (followfork == 1 || nprocs > 1));
 }
