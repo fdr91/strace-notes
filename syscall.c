@@ -321,15 +321,15 @@ set_personality(int personality)
 	current_wordsize = personality_wordsize[personality];
 # endif
 }
-
+//Обновление значения режима работы процесора
 static void
 update_personality(struct tcb *tcp, int personality)
 {
-	if (personality == current_personality)
+	if (personality == current_personality)//Уже стоит нужный режим
 		return;
-	set_personality(personality);
+	set_personality(personality);//Устанавливаем режим
 
-	if (personality == tcp->currpers)
+	if (personality == tcp->currpers)//Устанавливаем режим в tcp, если нужно
 		return;
 	tcp->currpers = personality;
 
@@ -339,7 +339,7 @@ update_personality(struct tcb *tcp, int personality)
 		fprintf(stderr, "[ Process PID=%d runs in %s mode. ]\n",
 			tcp->pid, names[personality]);
 	}
-# elif defined(X86_64)
+# elif defined(X86_64)//Если требуется отладка стрейса, производим вывод дополнительнгой инф-и
 	if (!qflag) {
 		static const char *const names[] = {"64 bit", "32 bit", "x32"};
 		fprintf(stderr, "[ Process PID=%d runs in %s mode. ]\n",
@@ -639,21 +639,23 @@ qualify(const char *s)
 }
 
 #ifdef SYS_socket_subcall
+//Расшифровываем информацию о вызове, если он относится к сокетам
 static void
 decode_socket_subcall(struct tcb *tcp)
 {
 	unsigned long addr;
 	unsigned int i, n, size;
 
-	if (tcp->u_arg[0] < 0 || tcp->u_arg[0] >= SYS_socket_nsubcalls)
+	if (tcp->u_arg[0] < 0 || tcp->u_arg[0] >= SYS_socket_nsubcalls)//проверяем корректность информации
 		return;
 
-	tcp->scno = SYS_socket_subcall + tcp->u_arg[0];
-	tcp->qual_flg = qual_flags[tcp->scno];
-	tcp->s_ent = &sysent[tcp->scno];
-	addr = tcp->u_arg[1];
+	tcp->scno = SYS_socket_subcall + tcp->u_arg[0];//декодируем номер вызова
+	tcp->qual_flg = qual_flags[tcp->scno];//Изменение флагов действий
+	tcp->s_ent = &sysent[tcp->scno];//т.к. изменился номер вызова -- берем из таблицы новую информацию
+	addr = tcp->u_arg[1];//первый аргумент вызова --
 	size = current_wordsize;
 	n = tcp->s_ent->nargs;
+	/*Парсим адрес, записсанный в ulong*/
 	for (i = 0; i < n; ++i) {
 		if (size == sizeof(int)) {
 			unsigned int arg;
@@ -673,19 +675,20 @@ decode_socket_subcall(struct tcb *tcp)
 #endif
 
 #ifdef SYS_ipc_subcall
+//Расшифровываем информацию о вызове, если он относится к ipc
 static void
 decode_ipc_subcall(struct tcb *tcp)
 {
 	unsigned int i, n;
 
-	if (tcp->u_arg[0] < 0 || tcp->u_arg[0] >= SYS_ipc_nsubcalls)
+	if (tcp->u_arg[0] < 0 || tcp->u_arg[0] >= SYS_ipc_nsubcalls)//Коррестна ли информация?
 		return;
 
-	tcp->scno = SYS_ipc_subcall + tcp->u_arg[0];
-	tcp->qual_flg = qual_flags[tcp->scno];
-	tcp->s_ent = &sysent[tcp->scno];
+	tcp->scno = SYS_ipc_subcall + tcp->u_arg[0];//декодирование номера вызова
+	tcp->qual_flg = qual_flags[tcp->scno];//Изменение флагов действий
+	tcp->s_ent = &sysent[tcp->scno];//т.к. изменился номер вызова -- берем из таблицы новую информацию
 	n = tcp->s_ent->nargs;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++)//сдвигаем список аргументов
 		tcp->u_arg[i] = tcp->u_arg[i + 1];
 }
 #endif
@@ -1189,11 +1192,11 @@ get_regs(pid_t pid)
 }
 #endif /* !get_regs */
 
-/* Returns:
- * 0: "ignore this ptrace stop", bail out of trace_syscall_entering() silently.
- * 1: ok, continue in trace_syscall_entering().
- * other: error, trace_syscall_entering() should print error indicator
- *    ("????" etc) and bail out.
+/*
+ * Возвращаем
+ * 0: игнорировать это событие
+ * 1: продолжить работу с этим событием
+ * другое: ошибка -- trace_syscall_entering() должна напечатать индикатор наличия ошибки -- ("????" etc) и завершиться
  */
 static int
 get_scno(struct tcb *tcp)
@@ -1317,6 +1320,13 @@ get_scno(struct tcb *tcp)
 	 * arch/x86/include/asm/compat.h::is_x32_task():
 	 * if (task_pt_regs(current)->orig_ax & __X32_SYSCALL_BIT)
 	 *         return true;
+	 *
+	 *   режим работы и номер системного вызова (i386 или x86_64 или x32)
+	 *   currpers -- набор инструкций, который так же будет определен здесь
+	 *
+	 *   Размер набора регистров позволяет однозначно выделить  i386
+	 *
+	 *	x86_64 от x32 отличается значением __X32_SYSCALL_BIT
 	 */
 	if (x86_io.iov_len == sizeof(i386_regs)) {
 		scno = i386_regs.orig_eax;
@@ -1624,9 +1634,9 @@ get_scno(struct tcb *tcp)
 #endif
 
 	tcp->scno = scno;
-	if (SCNO_IS_VALID(tcp->scno)) {
-		tcp->s_ent = &sysent[scno];
-		tcp->qual_flg = qual_flags[scno];
+	if (SCNO_IS_VALID(tcp->scno)) {//Номер вызова допустим?
+		tcp->s_ent = &sysent[scno];//Информаци о системном вызове
+		tcp->qual_flg = qual_flags[scno];//Информация о том, что с ним делать
 	} else {
 		static const struct_sysent unknown = {
 			.nargs = MAX_ARGS,
@@ -1634,6 +1644,7 @@ get_scno(struct tcb *tcp)
 			.sys_func = printargs,
 			.sys_name = "unknown", /* not used */
 		};
+		//Вызов неизвестен
 		tcp->s_ent = &unknown;
 		tcp->qual_flg = UNDEFINED_SCNO | QUAL_RAW | DEFAULT_QUAL_FLAGS;
 	}
@@ -2022,7 +2033,7 @@ get_syscall_args(struct tcb *tcp)
 #endif
 	return 1;
 }
-
+//Пишем информацию о входе в системный вызов
 static int
 trace_syscall_entering(struct tcb *tcp)
 {
@@ -2035,7 +2046,8 @@ trace_syscall_entering(struct tcb *tcp)
 		return 0;
 	}
 #endif
-
+	//в scno_good и в res окажется информаци о том, был ли вызов праильно обработан
+	//в tcp будет записана инф-я о вызове -- его номер
 	scno_good = res = (get_regs_error ? -1 : get_scno(tcp));
 	if (res == 0)
 		return res;
@@ -2047,7 +2059,7 @@ trace_syscall_entering(struct tcb *tcp)
 			res = get_syscall_args(tcp);
 	}
 
-	if (res != 1) {
+	if (res != 1) {//При обработке вызова возникли проблемы -- пишем об этом в лог
 		printleader(tcp);
 		if (scno_good != 1)
 			tprints("????" /* anti-trigraph gap */ "(");
@@ -2062,7 +2074,7 @@ trace_syscall_entering(struct tcb *tcp)
 		goto ret;
 	}
 
-	if (   sys_execve == tcp->s_ent->sys_func
+	if (   sys_execve == tcp->s_ent->sys_func//имеем дело с sys_execve -- меняем флаг того, что лог должен скрываться
 # if defined(SPARC) || defined(SPARC64)
 	    || sys_execv == tcp->s_ent->sys_func
 # endif
@@ -2073,13 +2085,13 @@ trace_syscall_entering(struct tcb *tcp)
 #if defined(SYS_socket_subcall) || defined(SYS_ipc_subcall)
 	while (1) {
 # ifdef SYS_socket_subcall
-		if (tcp->s_ent->sys_func == sys_socketcall) {
+		if (tcp->s_ent->sys_func == sys_socketcall) {//вызов, отсносящийся к соккету?
 			decode_socket_subcall(tcp);
 			break;
 		}
 # endif
 # ifdef SYS_ipc_subcall
-		if (tcp->s_ent->sys_func == sys_ipc) {
+		if (tcp->s_ent->sys_func == sys_ipc) {//вызов, отсносящийся к ipc??
 			decode_ipc_subcall(tcp);
 			break;
 		}
@@ -2088,19 +2100,19 @@ trace_syscall_entering(struct tcb *tcp)
 	}
 #endif
 
-	if (need_fork_exec_workarounds)
+	if (need_fork_exec_workarounds)//Этот флаг ставится по итогам инициализации. Если true -- требуются обходные пути при осуществелнии fork
 		syscall_fixup_for_fork_exec(tcp);
 
-	if (!(tcp->qual_flg & QUAL_TRACE)
-	 || (tracing_paths && !pathtrace_match(tcp))
+	if (!(tcp->qual_flg & QUAL_TRACE)//Проверяем, нужно ли нам отслеживать этот вызов по флагам и по
+	 || (tracing_paths && !pathtrace_match(tcp))//Пути, который указан при вызове (если был)
 	) {
-		tcp->flags |= TCB_INSYSCALL | TCB_FILTERED;
+		tcp->flags |= TCB_INSYSCALL | TCB_FILTERED;//Если нет -- игнорируем вызова
 		return 0;
 	}
 
-	tcp->flags &= ~TCB_FILTERED;
+	tcp->flags &= ~TCB_FILTERED;//Вызов прошел фильтры
 
-	if (cflag == CFLAG_ONLY_STATS || hide_log_until_execve) {
+	if (cflag == CFLAG_ONLY_STATS || hide_log_until_execve) {//Требуется ли на данном этапе вести лог?
 		res = 0;
 		goto ret;
 	}
@@ -2112,29 +2124,30 @@ trace_syscall_entering(struct tcb *tcp)
 	}
 #endif
 
-	printleader(tcp);
-	if (tcp->qual_flg & UNDEFINED_SCNO)
-		tprintf("%s(", undefined_scno_name(tcp));
+	printleader(tcp);//Печатаем начало строке
+	if (tcp->qual_flg & UNDEFINED_SCNO)//Был ли определен номер вызова?
+		tprintf("%s(", undefined_scno_name(tcp));//Печатаем неопределенное имя
 	else
-		tprintf("%s(", tcp->s_ent->sys_name);
-	if ((tcp->qual_flg & QUAL_RAW) && tcp->s_ent->sys_func != sys_exit)
+		tprintf("%s(", tcp->s_ent->sys_name);//Печатаем имя
+	if ((tcp->qual_flg & QUAL_RAW) && tcp->s_ent->sys_func != sys_exit)//Нужно ли печатать аргументы?
 		res = printargs(tcp);
 	else
 		res = tcp->s_ent->sys_func(tcp);
 
-	fflush(tcp->outf);
+	fflush(tcp->outf);//Очистка кэша
  ret:
-	tcp->flags |= TCB_INSYSCALL;
+	tcp->flags |= TCB_INSYSCALL;//Пишем инф-ю о том, что был произведен вход в вызов
 	/* Measure the entrance time as late as possible to avoid errors. */
-	if (Tflag || cflag)
+	if (Tflag || cflag)//Если нужно, измеряем время входа
 		gettimeofday(&tcp->etime, NULL);
 	return res;
 }
 
-/* Returns:
- * 1: ok, continue in trace_syscall_exiting().
- * -1: error, trace_syscall_exiting() should print error indicator
- *    ("????" etc) and bail out.
+/* Возрат:
+ * 1: ok, продолжаем выполнение trace_syscall_exiting().
+ * -1: ошибка, trace_syscall_exiting() должна напечатать индикатор ошибки
+ *    ("????" etc) и завершиться.
+ *   В моем случае всегда возвращает 1 (already done by get_regs)
  */
 static int
 get_syscall_result(struct tcb *tcp)
@@ -2572,7 +2585,7 @@ dumpio(struct tcb *tcp)
 		return;
 	}
 }
-
+//Обработка завершения системного вызова
 static int
 trace_syscall_exiting(struct tcb *tcp)
 {
@@ -2582,7 +2595,7 @@ trace_syscall_exiting(struct tcb *tcp)
 	long u_error;
 
 	/* Measure the exit time as early as possible to avoid errors. */
-	if (Tflag || cflag)
+	if (Tflag || cflag)//Измеряем время выхода
 		gettimeofday(&tv, NULL);
 
 #ifdef USE_LIBUNWIND
@@ -2593,21 +2606,21 @@ trace_syscall_exiting(struct tcb *tcp)
 #endif
 
 #if SUPPORTED_PERSONALITIES > 1
-	update_personality(tcp, tcp->currpers);
+	update_personality(tcp, tcp->currpers);//Если у процессора может быть несколько режимов работы, нужно перейти к тому, который был в системном вызове
 #endif
-	res = (get_regs_error ? -1 : get_syscall_result(tcp));
-	if (res == 1) {
+	res = (get_regs_error ? -1 : get_syscall_result(tcp));//Пишем результаты вызова в tcp, если не возникло ошибок
+	if (res == 1) {//Есть ли ошибки?
 		syscall_fixup_on_sysexit(tcp); /* never fails */
 		get_error(tcp); /* never fails */
-		if (need_fork_exec_workarounds)
+		if (need_fork_exec_workarounds)//Этот флаг ставится по итогам инициализации. Если true -- требуются обходные пути при осуществелнии fork
 			syscall_fixup_for_fork_exec(tcp);
-		if (filtered(tcp) || hide_log_until_execve)
+		if (filtered(tcp) || hide_log_until_execve)//Если этот вызов был отфильтрован или лог пока что требуется скрывать -- идем к концу функции
 			goto ret;
 	}
 
-	if (cflag) {
-		count_syscall(tcp, &tv);
-		if (cflag == CFLAG_ONLY_STATS) {
+	if (cflag) {//Ведется сбор дополнительной статистики -- собираем её
+		count_syscall(tcp, &tv);//Сохраняем параметры вызова -- номер и время работы
+		if (cflag == CFLAG_ONLY_STATS) {//Если нужна только суммарная информация -- пропускаем кое-что
 			goto ret;
 		}
 	}
@@ -2621,18 +2634,20 @@ trace_syscall_exiting(struct tcb *tcp)
 	 * "strace -ff -oLOG test/threaded_execve" corner case.
 	 * It's the only case when -ff mode needs reprinting.
 	 */
+	//Действия, необходимые для корректного вывода, когда вывод об одном вызове перемежается другим
+	//и они пишутся в один файл
 	if ((followfork < 2 && printing_tcp != tcp) || (tcp->flags & TCB_REPRINT)) {
 		tcp->flags &= ~TCB_REPRINT;
-		printleader(tcp);
-		if (tcp->qual_flg & UNDEFINED_SCNO)
+		printleader(tcp);//печатаем "голову"
+		if (tcp->qual_flg & UNDEFINED_SCNO)//печатаем либо имя вызова, либо то, что оно не определено
 			tprintf("<... %s resumed> ", undefined_scno_name(tcp));
 		else
 			tprintf("<... %s resumed> ", tcp->s_ent->sys_name);
 	}
 	printing_tcp = tcp;
 
-	if (res != 1) {
-		/* There was error in one of prior ptrace ops */
+	if (res != 1) {//Возникли какие-то ошибки ранее?
+		/* Печатаем об этом в лог и переходим к новой строке и выходим */
 		tprints(") ");
 		tabto();
 		tprints("= ? <unavailable>\n");
@@ -2641,8 +2656,9 @@ trace_syscall_exiting(struct tcb *tcp)
 		return res;
 	}
 
-	sys_res = 0;
-	if (tcp->qual_flg & QUAL_RAW) {
+	sys_res = 0;//Возвращенное значение?
+
+	if (tcp->qual_flg & QUAL_RAW) {//Нужно ли печатать raw информацию?
 		/* sys_res = printargs(tcp); - but it's nop on sysexit */
 	} else {
 	/* FIXME: not_failing_only (IOW, option -z) is broken:
@@ -2658,17 +2674,17 @@ trace_syscall_exiting(struct tcb *tcp)
 		sys_res = tcp->s_ent->sys_func(tcp);
 	}
 
-	tprints(") ");
-	tabto();
-	u_error = tcp->u_error;
-	if (tcp->qual_flg & QUAL_RAW) {
+	tprints(") ");//Закрывается информация об аргументах и т.п.
+	tabto();//Печатаем заполнители
+	u_error = tcp->u_error;//Возникли ошибки в вызовЕ?
+	if (tcp->qual_flg & QUAL_RAW) {//Если нужно печатть пустую информацию -- печатаем номер ошибки или возвращенное значение
 		if (u_error)
 			tprintf("= -1 (errno %ld)", u_error);
 		else
 			tprintf("= %#lx", tcp->u_rval);
 	}
-	else if (!(sys_res & RVAL_NONE) && u_error) {
-		switch (u_error) {
+	else if (!(sys_res & RVAL_NONE) && u_error) {//Если нет, но ошибки есть и вызов ничего не вернул
+		switch (u_error) {//Печатаем информацию об ошибке
 		/* Blocked signals do not interrupt any syscalls.
 		 * In this case syscalls don't return ERESTARTfoo codes.
 		 *
@@ -2737,9 +2753,9 @@ trace_syscall_exiting(struct tcb *tcp)
 			tprintf(" (%s)", tcp->auxstr);
 	}
 	else {
-		if (sys_res & RVAL_NONE)
+		if (sys_res & RVAL_NONE) //Нет ошибок, но вызов ничего не вернул -- ?
 			tprints("= ?");
-		else {
+		else {//Вызов что-то вернул -- печатем это
 			switch (sys_res & RVAL_MASK) {
 			case RVAL_HEX:
 				tprintf("= %#lx", tcp->u_rval);
@@ -2780,12 +2796,12 @@ trace_syscall_exiting(struct tcb *tcp)
 			*/
 #endif
 			default:
-				fprintf(stderr,
+				fprintf(stderr,//Неправильный формат возвращенного значения -- информируем об этом
 					"invalid rval format\n");
 				break;
 			}
 		}
-		if ((sys_res & RVAL_STR) && tcp->auxstr)
+		if ((sys_res & RVAL_STR) && tcp->auxstr)//Печатаем вспомогательную инф-ю
 			tprintf(" (%s)", tcp->auxstr);
 	}
 	if (Tflag) {
@@ -2803,10 +2819,69 @@ trace_syscall_exiting(struct tcb *tcp)
 #endif
 
  ret:
-	tcp->flags &= ~TCB_INSYSCALL;
+	tcp->flags &= ~TCB_INSYSCALL;//Сброс флага о том, что мы находимя в вызове
 	return 0;
 }
 
+
+//XXX моя функция для ведения лога
+int
+my_trace_syscall(struct tcb *tcp)
+{
+
+	int res;
+	if(!exiting(tcp)){
+		struct timeval tv;
+		char str[sizeof("HH:MM:SS")];
+		gettimeofday(&tv, NULL);//Берем текущее время
+		strftime(str, sizeof(str), "%T", localtime(&tv.tv_sec));
+		//в scno_good и в res окажется информаци о том, был ли вызов праильно обработан
+		//в tcp будет записана инф-я о вызове -- его номер
+		res = (get_regs_error ? -1 : get_scno(tcp));
+		if (res == 0)
+			return res;
+		if (res == 1) {
+			res = syscall_fixup_on_sysenter(tcp);
+			if (res == 0)
+				return res;
+			if (res == 1)
+				res = get_syscall_args(tcp);
+		}
+		if (tcp->s_ent->sys_func == sys_socketcall) {//вызов, отсносящийся к соккету?
+			decode_socket_subcall(tcp);
+		}
+		if (tcp->s_ent->sys_func == sys_ipc) {//вызов, отсносящийся к ipc??
+			decode_ipc_subcall(tcp);
+		}
+		fprintf(stderr, "[pid %5u] %s %s(", tcp->pid, str, tcp->s_ent->sys_name);
+		printargs(tcp);
+		fflush(stdin);//Очистка кэша
+		tcp->flags |= TCB_INSYSCALL;//Пишем инф-ю о том, что был произведен вход в вызов
+	} else {
+			update_personality(tcp, tcp->currpers);//Если у процессора может быть несколько режимов работы, нужно перейти к тому, который был в системном вызове
+			res = (get_regs_error ? -1 : get_syscall_result(tcp));//Пишем результаты вызова в tcp, если не возникло ошибок
+			if (res == 1) {//Есть ли ошибки?
+				syscall_fixup_on_sysexit(tcp); /* never fails */
+				get_error(tcp); /* never fails */
+			}
+			printing_tcp = tcp;
+			if (res != 1) {//Возникли какие-то ошибки ранее?
+				/* Печатаем об этом в лог и переходим к новой строке и выходим */
+				fprintf(stderr, ") ");
+				fprintf(stderr, "= ? <unavailable>\n");
+				line_ended();
+				tcp->flags &= ~TCB_INSYSCALL;
+				return res;
+			}
+			fprintf(stderr, ") = %#lx \n",tcp->u_rval);//Закрывается информация об аргументах и т.п.
+			dumpio(tcp);
+			tcp->flags &= ~TCB_INSYSCALL;//Сброс флага о том, что мы находимя в вызове
+			res = 0;
+	}
+	return res;
+}
+
+//Пишем syscall в лог записи tcp
 int
 trace_syscall(struct tcb *tcp)
 {

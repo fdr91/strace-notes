@@ -404,9 +404,9 @@ typedef struct ioctlent {
 struct tcb {
 	int flags;		/* See below for TCB_ values */
 	int pid;		/* If 0, this tcb is free */
-	int qual_flg;		/* qual_flags[scno] or DEFAULT_QUAL_FLAGS + RAW */
+	int qual_flg;		/* Информация о том, что делать с текущим вызовом(писать/игнорировать...). qual_flags[scno] or DEFAULT_QUAL_FLAGS + RAW */
 	int u_error;		/* Error code */
-	long scno;		/* System call number */
+	long scno;		/* Номер системного вызова */
 	long u_arg[MAX_ARGS];	/* System call arguments */
 #if defined(LINUX_MIPSN32) || defined(X32)
 	long long ext_arg[MAX_ARGS];
@@ -501,7 +501,7 @@ typedef uint8_t qualbits_t;
 #define DEFAULT_QUAL_FLAGS (QUAL_TRACE | QUAL_ABBREV | QUAL_VERBOSE)
 
 #define entering(tcp)	(!((tcp)->flags & TCB_INSYSCALL))
-#define exiting(tcp)	((tcp)->flags & TCB_INSYSCALL)
+#define exiting(tcp)	((tcp)->flags & TCB_INSYSCALL) //Проверка: событие --  выход или вход в вызов?
 #define syserror(tcp)	((tcp)->u_error != 0)
 #define verbose(tcp)	((tcp)->qual_flg & QUAL_VERBOSE)
 #define abbrev(tcp)	((tcp)->qual_flg & QUAL_ABBREV)

@@ -75,20 +75,24 @@ bool stack_trace_enabled = false;
 #endif
 
 cflag_t cflag = CFLAG_NONE;//Флаг того, какие дополнительные логи нужно собирать
-unsigned int followfork = 0;
+unsigned int followfork = 0;//Нужно ли отслеживать все fork
 unsigned int ptrace_setoptions = 0; //Опции, с которыми будет вызываться ptrace
-unsigned int xflag = 0;
+unsigned int xflag = 0;//печатать non-ascii строки в 16-ричном формате
 bool need_fork_exec_workarounds = 0;//Требуются обходные пути из-за того что ядро не поддерживает какие-то из нужных нам опций ptrace
 bool debug_flag = 0;
-bool Tflag = 0;
+bool Tflag = 0;//Нужно выводить время, проведенное в каждом вызове?
 bool iflag = 0;//Нужно печатать pc
-bool count_wallclock = 0;
+bool count_wallclock = 0;//Вывести суммарную задержку  системного вызова
 unsigned int qflag = 0;//Флаг того, что не нужно выводить сообщения о присоединении/отсоединении процессов
 /* Which WSTOPSIG(status) value marks syscall traps? */
 static unsigned int syscall_trap_sig = SIGTRAP;
 static unsigned int tflag = 0;//Флаг формата таймстампов
-static bool rflag = 0;
+static bool rflag = 0;//печатать относительные таймстампы
 static bool print_pid_pfx = 0;
+
+//XXX мой логгер
+static bool enable_new_logger=0;
+
 
 /* -I n */
 //Используется для opt_intr
@@ -116,7 +120,10 @@ static int opt_intr; //Значение опции -I -- она отвечает
  * wait() etc. Without -D, strace process gets lodged in between,
  * disrupting parent<->child link.
  */
-static bool daemonized_tracer = 0;
+
+static bool daemonized_tracer = 0;//Поддержка демонизированного трейсера (см. ниже)
+
+
 
 #if USE_SEIZE
 static int post_attach_sigstop = TCB_IGNORE_ONE_SIGSTOP;
@@ -127,7 +134,7 @@ static int post_attach_sigstop = TCB_IGNORE_ONE_SIGSTOP;
 #endif
 
 /* Sometimes we want to print only succeeding syscalls. */
-bool not_failing_only = 0;
+bool not_failing_only = 0;//Печатать только успешные вызовы
 
 /* Show path associated with fd arguments */
 unsigned int show_fd_path = 0;
@@ -148,10 +155,10 @@ static uid_t run_uid;
 static gid_t run_gid;
 
 unsigned int max_strlen = DEFAULT_STRLEN;
-static int acolumn = DEFAULT_ACOLUMN;
+static int acolumn = DEFAULT_ACOLUMN;//ширина выравнивания столбцов при выводе
 static char *acolumn_spaces;
 
-static char *outfname = NULL;
+static char *outfname = NULL;// выходной файл
 /* If -ff, points to stderr. Else, it's our common output log */
 static FILE *shared_log;
 
@@ -1734,13 +1741,17 @@ init(int argc, char *argv[])
 	qualify("signal=all");//Отслеживание всех сигналов
 	//Парсинг опций
 	while ((c = getopt(argc, argv,
-		"+b:cCdfFhiqrtTvVwxyz"
+		"+b:cCdfFhiqrtTvVwxyzg"
 #ifdef USE_LIBUNWIND
 		"k"
 #endif
 		"D"
 		"a:e:o:O:p:s:S:u:E:P:I:")) != EOF) {
 		switch (c) {
+		case 'g': //XXX опция для включения моего собственного логгера
+			printf("!!!WARNING!!! my logger is enabled\n");
+			enable_new_logger = 1;
+			break;
 		case 'b': //Опция -b -- отсоединиться при указанном системном вызове
 			if (strcmp(optarg, "execve") != 0)
 				error_msg_and_die("Syscall '%s' for -b isn't supported",
@@ -1806,7 +1817,7 @@ init(int argc, char *argv[])
 			exit(0);
 			break;
 		case 'z'://Опция не описана в Хэлпе
-			not_failing_only = 1;
+			not_failing_only = 1;//Печатать только успешные вызовы
 			break;
 		case 'a'://Установить ширину выравнивания столбцов при выводе
 			acolumn = string_to_uint(optarg);
@@ -2136,7 +2147,7 @@ trace(void)
 		if (interrupted)//Выход, если был послан сигнал прекращения работы
 			return;
 
-		if (popen_pid != 0 && nprocs == 0)//Нет открытых процессов
+		if (popen_pid != 0 && nprocs == 0)//Нет открытых процессов и при этом присутствует логгер
 			return;
 
 		if (interactive)//Установка сигналов, которые могут вызывать остановку процессов на empty_set
@@ -2152,7 +2163,7 @@ trace(void)
 		if (pid < 0) {//Был ли wait завершен без ошибки?
 			if (wait_errno == EINTR)//Вызов был прерван -- перходим к следующей итерации
 				continue;
-			if (nprocs == 0 && wait_errno == ECHILD)//Пид не был возвращен, тк. нет детей
+			if (nprocs == 0 && wait_errno == ECHILD)//Пид не был возвращен, тк. нет детей? -- завершаем работу
 				return;
 			/* If nprocs > 0, ECHILD is not expected,
 			 * treat it as any other error here:
@@ -2507,19 +2518,28 @@ trace(void)
 		/* This should be syscall entry or exit.
 		 * (Or it still can be that pesky post-execve SIGTRAP!)
 		 * Handle it.
+		 *
+		 * Если мы оказались здесь, что возникшее событие -- либо вход в либо выхов из
+		 * системного вызова  (хотя это так же может быть SIGTRAP после execve)
 		 */
-		if (trace_syscall(tcp) < 0) {
-			/* ptrace() failed in trace_syscall().
-			 * Likely a result of process disappearing mid-flight.
-			 * Observed case: exit_group() or SIGKILL terminating
-			 * all processes in thread group.
-			 * We assume that ptrace error was caused by process death.
-			 * We used to detach(tcp) here, but since we no longer
-			 * implement "detach before death" policy/hack,
-			 * we can let this process to report its death to us
-			 * normally, via WIFEXITED or WIFSIGNALED wait status.
-			 */
-			continue;
+		if(enable_new_logger){
+			//NOP
+			if(my_trace_syscall(tcp)<0)
+				continue;
+		} else {
+			if (trace_syscall(tcp) < 0) {
+				/* ptrace() failed in trace_syscall().
+				 * Likely a result of process disappearing mid-flight.
+				 * Observed case: exit_group() or SIGKILL terminating
+				 * all processes in thread group.
+				 * We assume that ptrace error was caused by process death.
+				 * We used to detach(tcp) here, but since we no longer
+				 * implement "detach before death" policy/hack,
+				 * we can let this process to report its death to us
+				 * normally, via WIFEXITED or WIFSIGNALED wait status.
+				 */
+				continue;
+			}
 		}
  restart_tracee_with_sig_0:
 		sig = 0;
