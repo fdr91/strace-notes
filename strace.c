@@ -74,19 +74,19 @@ bool stack_trace_enabled = false;
 # define fork() vfork()
 #endif
 
-cflag_t cflag = CFLAG_NONE;
+cflag_t cflag = CFLAG_NONE;//Флаг того, какие дополнительные логи нужно собирать
 unsigned int followfork = 0;
-unsigned int ptrace_setoptions = 0;
+unsigned int ptrace_setoptions = 0; //Опции, с которыми будет вызываться ptrace
 unsigned int xflag = 0;
-bool need_fork_exec_workarounds = 0;
+bool need_fork_exec_workarounds = 0;//Требуются обходные пути из-за того что ядро не поддерживает какие-то из нужных нам опций ptrace
 bool debug_flag = 0;
 bool Tflag = 0;
-bool iflag = 0;
+bool iflag = 0;//Нужно печатать pc
 bool count_wallclock = 0;
 unsigned int qflag = 0;//Флаг того, что не нужно выводить сообщения о присоединении/отсоединении процессов
 /* Which WSTOPSIG(status) value marks syscall traps? */
 static unsigned int syscall_trap_sig = SIGTRAP;
-static unsigned int tflag = 0;
+static unsigned int tflag = 0;//Флаг формата таймстампов
 static bool rflag = 0;
 static bool print_pid_pfx = 0;
 
@@ -252,7 +252,7 @@ usage: strace [-CdffhiqrtttTvVxxy] [-I n] [-e expr]...\n\
 , DEFAULT_ACOLUMN, DEFAULT_STRLEN, DEFAULT_SORTBY);
 	exit(exitval);
 }
-
+//Завершение работы
 static void die(void) __attribute__ ((noreturn));
 static void die(void)
 {
@@ -366,11 +366,11 @@ ptrace_attach_or_seize(int pid)
 #endif
 
 /*
- * Used when we want to unblock stopped traced process.
- * Should be only used with PTRACE_CONT, PTRACE_DETACH and PTRACE_SYSCALL.
- * Returns 0 on success or if error was ESRCH
- * (presumably process was killed while we talk to it).
- * Otherwise prints error message and returns -1.
+ * Используется, когда нужно разблокировать остановленный наблюдаемый процесс
+ * Должна вызываться только с sig==PTRACE_CONT, PTRACE_DETACH and PTRACE_SYSCALL.
+ * Возвращает 0 при успешном завершении работы или если возникла ошибка ESRCH (no such process)
+ * (возможно, процесс был убит, пока мы обращались к функции)
+ * в противном случае выведет сообщение об ошибке и вернет -1
  */
 static int
 ptrace_restart(int op, struct tcb *tcp, int sig)
@@ -379,12 +379,12 @@ ptrace_restart(int op, struct tcb *tcp, int sig)
 	const char *msg;
 
 	errno = 0;
-	ptrace(op, tcp->pid, (void *) 0, (long) sig);
+	ptrace(op, tcp->pid, (void *) 0, (long) sig); //Пробуем присоединиться к процессу, который указан в параметрах
 	err = errno;
 	if (!err)
-		return 0;
+		return 0;//Ошибок не возникло -- возвращаем 0
 
-	msg = "SYSCALL";
+	msg = "SYSCALL";//Для вывода сообщения об ошибке, выясняем, какая была вызвана операция
 	if (op == PTRACE_CONT)
 		msg = "CONT";
 	if (op == PTRACE_DETACH)
@@ -406,32 +406,27 @@ ptrace_restart(int op, struct tcb *tcp, int sig)
 		tprintf(" <ptrace(%s):%s>\n", msg, strerror(err));
 		line_ended();
 	}
-	if (err == ESRCH)
+	if (err == ESRCH)//Возвращаем 0,если не найден процесс
 		return 0;
-	errno = err;
+	errno = err;//Иначе--выводит сообщение об ощибке
 	perror_msg("ptrace(PTRACE_%s,pid:%d,sig:%d)", msg, tcp->pid, sig);
 	return -1;
 }
-
+//Устанавливает флаг FD_CLOEXEC к файлу, связанному с дескриптором fd
 static void
 set_cloexec_flag(int fd)
 {
 	int flags, newflags;
 
-	flags = fcntl(fd, F_GETFD);
-	if (flags < 0) {
-		/* Can happen only if fd is bad.
-		 * Should never happen: if it does, we have a bug
-		 * in the caller. Therefore we just abort
-		 * instead of propagating the error.
-		 */
+	flags = fcntl(fd, F_GETFD);//Прочитать флаги файлового дескриптора
+	if (flags < 0) {//Произошла ошибка при чтении флагов
 		perror_msg_and_die("fcntl(%d, F_GETFD)", fd);
 	}
 
-	newflags = flags | FD_CLOEXEC;
+	newflags = flags | FD_CLOEXEC;//Добавляем нужный флаг
 	if (flags == newflags)
 		return;
-
+	//Применяем новые флаги к дескриптору
 	fcntl(fd, F_SETFD, newflags); /* never fails */
 }
 /*Убить процесс с сохранение номера ошибки*/
@@ -494,7 +489,7 @@ strace_fopen(const char *path)
 	return fp;//Возвращаем файл
 }
 
-static int popen_pid = 0;
+static int popen_pid = 0;//Специальный пид. Это процесс, в который будет писаться лог, если передан параметр -о [!|]
 
 #ifndef _PATH_BSHELL
 # define _PATH_BSHELL "/bin/sh"
@@ -505,6 +500,7 @@ static int popen_pid = 0;
  * popen child process from other processes we trace, and standard popen(3)
  * does not export its child's pid.
  */
+//Открываем процесс для записи в него информации, если передана опция -о [!|]*
 static FILE *
 strace_popen(const char *command)
 {
@@ -512,51 +508,51 @@ strace_popen(const char *command)
 	int pid;
 	int fds[2];
 
-	swap_uid();
-	if (pipe(fds) < 0)
+	swap_uid();//Ставим нужные uid и gid
+	if (pipe(fds) < 0)/*Открываем поток*/
 		perror_msg_and_die("pipe");
 
 	set_cloexec_flag(fds[1]); /* never fails */
 
-	pid = vfork();
+	pid = vfork();//Клонирует процесс. Родитель замирает, пока ребенок не закончит работу
 	if (pid < 0)
 		perror_msg_and_die("vfork");
 
-	if (pid == 0) {
+	if (pid == 0) {//В ребенке
 		/* child */
-		close(fds[1]);
+		close(fds[1]);//Закрываем записывающую сторону канала
 		if (fds[0] != 0) {
-			if (dup2(fds[0], 0))
+			if (dup2(fds[0], 0))//Перенаправляем stdin
 				perror_msg_and_die("dup2");
 			close(fds[0]);
 		}
-		execl(_PATH_BSHELL, "sh", "-c", command, NULL);
+		execl(_PATH_BSHELL, "sh", "-c", command, NULL);//Запускаем команду command на исполнение
 		perror_msg_and_die("Can't execute '%s'", _PATH_BSHELL);
 	}
 
-	/* parent */
+	/* В родителе  */
 	popen_pid = pid;
-	close(fds[0]);
-	swap_uid();
-	fp = fdopen(fds[1], "w");
+	close(fds[0]);//Закрываем читающую сторону канала
+	swap_uid();//Возвращаем uid и gid
+	fp = fdopen(fds[1], "w");//Открываем pipe на запись
 	if (!fp)
 		die_out_of_memory();
-	return fp;
+	return fp;//Возвращаем открытый канал.
 }
-
+//Печатает колонку в лог файл
 void
 tprintf(const char *fmt, ...)
 {
 	va_list args;
 
 	va_start(args, fmt);
-	if (current_tcp) {
-		int n = strace_vfprintf(current_tcp->outf, fmt, args);
-		if (n < 0) {
+	if (current_tcp) {//Если текущий дескриптор правильный
+		int n = strace_vfprintf(current_tcp->outf, fmt, args);//Выводим в файл
+		if (n < 0) {//Возникла ошибка при печати
 			if (current_tcp->outf != stderr)
 				perror_msg("%s", outfname);
 		} else
-			current_tcp->curcol += n;
+			current_tcp->curcol += n;//увеличиваем номер колонки
 	}
 	va_end(args);
 }
@@ -564,44 +560,44 @@ tprintf(const char *fmt, ...)
 #ifndef HAVE_FPUTS_UNLOCKED
 # define fputs_unlocked fputs
 #endif
-
+//Печатаем строку в файл
 void
 tprints(const char *str)
 {
 	if (current_tcp) {
-		int n = fputs_unlocked(str, current_tcp->outf);
+		int n = fputs_unlocked(str, current_tcp->outf);//Печатаем переданную строку в лог
 		if (n >= 0) {
-			current_tcp->curcol += strlen(str);
+			current_tcp->curcol += strlen(str);//Увеличиваем номер столбца
 			return;
 		}
-		if (current_tcp->outf != stderr)
+		if (current_tcp->outf != stderr)//Ошибка, если вывод производился не в stderr
 			perror_msg("%s", outfname);
 	}
 }
-
+//Переход к следующей линии
 void
 line_ended(void)
 {
-	if (current_tcp) {
+	if (current_tcp) {//Обнуляем колонку в дескрипторе процесса (с которым идет работа)
 		current_tcp->curcol = 0;
 		fflush(current_tcp->outf);
 	}
-	if (printing_tcp) {
+	if (printing_tcp) {//Обнуляем колонку в дескрипторе процесса, который является текущим по отношению к печати
 		printing_tcp->curcol = 0;
 		printing_tcp = NULL;
 	}
 }
-
+//Печать начала записи в лог
 void
 printleader(struct tcb *tcp)
 {
 	/* If -ff, "previous tcb we printed" is always the same as current,
 	 * because we have per-tcb output files.
 	 */
-	if (followfork >= 2)
+	if (followfork >= 2)//Если каждый тред имеет свой файл -- печатаем в этот файл (опция -ff)
 		printing_tcp = tcp;
 
-	if (printing_tcp) {
+	if (printing_tcp) {//Указан печатающий тред?
 		current_tcp = printing_tcp;
 		if (printing_tcp->curcol != 0 && (followfork < 2 || printing_tcp == tcp)) {
 			/*
@@ -609,8 +605,14 @@ printleader(struct tcb *tcp)
 			 * wasn't finished (same or different tcb, doesn't matter).
 			 * case 2: split log, we are the same tcb, but our last line
 			 * didn't finish ("SIGKILL nuked us after syscall entry" etc).
+
+			 * Попадем сюда в следующих случаях:
+			 * 1) Есть разделяемый лог (не указана опция -ff) и последняя печатаемая строка
+			 * не закончена (не имеет значение, в текущем или в другом tcb)
+			 * 2) мы в том же самом tcb, но последняя линия не была закончена
+			 *
 			 */
-			tprints(" <unfinished ...>\n");
+			tprints(" <unfinished ...>\n");//Сообщаем о незаконченности последней строки и переходим на нулевой столбец
 			printing_tcp->curcol = 0;
 		}
 	}
@@ -619,52 +621,53 @@ printleader(struct tcb *tcp)
 	current_tcp = tcp;
 	current_tcp->curcol = 0;
 
-	if (print_pid_pfx)
+	if (print_pid_pfx)//Как печатать номер пида?
 		tprintf("%-5d ", tcp->pid);
 	else if (nprocs > 1 && !outfname)
 		tprintf("[pid %5u] ", tcp->pid);
 
-	if (tflag) {
+	if (tflag) {//Нужны таймстампы? (опция -t)
 		char str[sizeof("HH:MM:SS")];
 		struct timeval tv, dtv;
 		static struct timeval otv;
 
-		gettimeofday(&tv, NULL);
-		if (rflag) {
+		gettimeofday(&tv, NULL);//Берем текущее время
+		if (rflag) {//Относительные таймстампы? Bug??
 			if (otv.tv_sec == 0)
 				otv = tv;
 			tv_sub(&dtv, &tv, &otv);
-			tprintf("%6ld.%06ld ",
+			tprintf("%6ld.%06ld ", //Печатаем таймстамп в файл
 				(long) dtv.tv_sec, (long) dtv.tv_usec);
 			otv = tv;
 		}
-		else if (tflag > 2) {
+		else if (tflag > 2) {//Указано 3t
 			tprintf("%ld.%06ld ",
 				(long) tv.tv_sec, (long) tv.tv_usec);
 		}
-		else {
+		else {//Не относительный таймстампы и не 3t
 			time_t local = tv.tv_sec;
 			strftime(str, sizeof(str), "%T", localtime(&local));
-			if (tflag > 1)
+			if (tflag > 1)// 2t? -- пичатаем микросекунды
 				tprintf("%s.%06ld ", str, (long) tv.tv_usec);
 			else
 				tprintf("%s ", str);
 		}
 	}
-	if (iflag)
+	if (iflag)//Нужно печатать pc?
 		print_pc(tcp);
 }
-
+//Печатаем заполнители
 void
 tabto(void)
 {
-	if (current_tcp->curcol < acolumn)
-		tprints(acolumn_spaces + current_tcp->curcol);
+	if (current_tcp->curcol < acolumn)//Если текущий столбец меньше, чем количество столбцов
+		tprints(acolumn_spaces + current_tcp->curcol);//Печатаем в лог соответствющее число заполнителей
 }
 
-/* Should be only called directly *after successful attach* to a tracee.
- * Otherwise, "strace -oFILE -ff -p<nonexistant_pid>"
- * may create bogus empty FILE.<nonexistant_pid>, and then die.
+/*
+ * Дожна вызываться сразу после успешного присоединения к отслеживаемому процессу
+ * в противном случае, "strace -oFILE -ff -p<nonexistant_pid>"
+ * может создать ненужный пустой файл FILE.<nonexistant_pid> и завершиться
  */
 static void
 newoutf(struct tcb *tcp)
@@ -676,7 +679,7 @@ newoutf(struct tcb *tcp)
 		tcp->outf = strace_fopen(name);//
 	}
 }
-
+/*Расширяет таблицу отслеживаемых процессов*/
 static void
 expand_tcbtab(void)
 {
@@ -686,13 +689,13 @@ expand_tcbtab(void)
 	   So tcbtab is a table of pointers.  Since we never
 	   free the TCBs, we allocate a single chunk of many.  */
 	int i = tcbtabsize;
-	struct tcb *newtcbs = calloc(tcbtabsize, sizeof(newtcbs[0]));
-	struct tcb **newtab = realloc(tcbtab, tcbtabsize * 2 * sizeof(tcbtab[0]));
-	if (!newtab || !newtcbs)
+	struct tcb *newtcbs = calloc(tcbtabsize, sizeof(newtcbs[0]));//Память для новой записи
+	struct tcb **newtab = realloc(tcbtab, tcbtabsize * 2 * sizeof(tcbtab[0]));//Перевыделяем память
+	if (!newtab || !newtcbs)///Ошибка при выделении памяти
 		die_out_of_memory();
-	tcbtabsize *= 2;
+	tcbtabsize *= 2;//Увеличиваем таблицу в два раза
 	tcbtab = newtab;
-	while (i < tcbtabsize)
+	while (i < tcbtabsize)//Инициализируем записи новой таблицы
 		tcbtab[i++] = newtcbs++;
 }
 //Добавляет заданный пид в отслеживаемые
@@ -719,7 +722,7 @@ alloctcb(int pid)
 				unwind_tcb_init(tcp);
 #endif
 
-			nprocs++;//Увееличиваем количество отслеживаемых процессов
+			nprocs++;//Увеличиваем количество отслеживаемых процессов
 			if (debug_flag)//Вывод отладочной информации, если нужно
 				fprintf(stderr, "new tcb for pid %d, active tcbs:%d\n", tcp->pid, nprocs);
 			return tcp;//Возвращаем новую струтуру
@@ -727,11 +730,11 @@ alloctcb(int pid)
 	}
 	error_msg_and_die("bug in alloctcb");//Ошибка. Сюда мы попадат не должны
 }
-
+/*Убирает запись о процессе из таблицы pidов*/
 static void
 droptcb(struct tcb *tcp)
 {
-	if (tcp->pid == 0)
+	if (tcp->pid == 0) //Случай, когда запись и так не активна
 		return;
 
 #ifdef USE_LIBUNWIND
@@ -740,11 +743,11 @@ droptcb(struct tcb *tcp)
 	}
 #endif
 
-	nprocs--;
+	nprocs--;//Уменьшаем счетчик активных потоков
 	if (debug_flag)
 		fprintf(stderr, "dropped tcb for pid %d, %d remain\n", tcp->pid, nprocs);
 
-	if (tcp->outf) {
+	if (tcp->outf) {//Закрываем лог-файл, если нужно, либо завершаем операции записи в этот файл и пишем туда информацию об отсоединении указанного процесса, если нужно
 		if (followfork >= 2) {
 			if (tcp->curcol != 0)
 				fprintf(tcp->outf, " <detached ...>\n");
@@ -756,18 +759,21 @@ droptcb(struct tcb *tcp)
 		}
 	}
 
-	if (current_tcp == tcp)
+	if (current_tcp == tcp)//Если шла работа с pid-ом, который нужно завешить
 		current_tcp = NULL;
-	if (printing_tcp == tcp)
+	if (printing_tcp == tcp)//Если шла операция вывода для pid-а, который нужно завершить
 		printing_tcp = NULL;
 
-	memset(tcp, 0, sizeof(*tcp));
+	memset(tcp, 0, sizeof(*tcp));//Обнуляем память, связанную с pid-ом
 }
 
 /* Detach traced process.
  * Never call DETACH twice on the same process as both unattached and
  * attached-unstopped processes give the same ESRCH.  For unattached process we
  * would SIGSTOP it and wait for its SIGSTOP notification forever.
+ *
+ * Отделить отслеживаемый процесс.
+ * Нельзя вызывать дваждый для одного процесса
  */
 static void
 detach(struct tcb *tcp)
@@ -775,8 +781,8 @@ detach(struct tcb *tcp)
 	int error;
 	int status;
 
-	if (tcp->flags & TCB_BPTSET)
-		clearbpt(tcp);
+	if (tcp->flags & TCB_BPTSET)//Флаг TCB_BPTSET установлен для текущего потока
+		clearbpt(tcp);//Убрать флаг
 
 	/*
 	 * Linux wrongly insists the child be stopped
@@ -788,18 +794,23 @@ detach(struct tcb *tcp)
 # define PTRACE_DETACH PTRACE_SUNDETACH
 #endif
 
-	if (!(tcp->flags & TCB_ATTACHED))
+	if (!(tcp->flags & TCB_ATTACHED))//Если процесс итак не присоединен -- просто сбрасываем запись о нем из таблицы
 		goto drop;
 
 	/* We attached but possibly didn't see the expected SIGSTOP.
 	 * We must catch exactly one as otherwise the detached process
 	 * would be left stopped (process state T).
+	 *
+	 * Мы присоединены, но, возможно, не знаем о том, что в процессе
+	 * был вызван SIGSTOP
+	 * Нужно, чтобы SIGSTOP был только один, инче отцепленный процесс
+	 * останется в остановленном состоянии
 	 */
-	if (tcp->flags & TCB_IGNORE_ONE_SIGSTOP)
+	if (tcp->flags & TCB_IGNORE_ONE_SIGSTOP) //
 		goto wait_loop;
 
-	error = ptrace(PTRACE_DETACH, tcp->pid, 0, 0);
-	if (!error) {
+	error = ptrace(PTRACE_DETACH, tcp->pid, 0, 0);//Отцепляем процесс
+	if (!error) {//Не возникло ошибок?
 		/* On a clear day, you can see forever. */
 		goto drop;
 	}
@@ -809,14 +820,15 @@ detach(struct tcb *tcp)
 		goto drop;
 	}
 	/* ESRCH: process is either not stopped or doesn't exist. */
-	if (my_tkill(tcp->pid, 0) < 0) {
-		if (errno != ESRCH)
+	if (my_tkill(tcp->pid, 0) < 0) {//Пытаемся убить процесс
+		if (errno != ESRCH)//ESRCH: Процесс не остановлен или не существует
 			/* Shouldn't happen. */
-			perror_msg("detach: tkill(%u,0)", tcp->pid);
+			perror_msg("detach: tkill(%u,0)", tcp->pid);//Ошибка
 		/* else: process doesn't exist. */
 		goto drop;
 	}
 	/* Process is not stopped, need to stop it. */
+	//Процесс не остановлен. Мы должны его остановить
 	if (use_seize) {
 		/*
 		 * With SEIZE, tracee can be in group-stop already.
@@ -824,17 +836,17 @@ detach(struct tcb *tcp)
 		 * Need to use INTERRUPT.
 		 * Testcase: trying to ^C a "strace -p <stopped_process>".
 		 */
-		error = ptrace(PTRACE_INTERRUPT, tcp->pid, 0, 0);
-		if (!error)
+		error = ptrace(PTRACE_INTERRUPT, tcp->pid, 0, 0);//В состоянии SEIZE может быть в групповой остановке -- если мы пошел еще один SIGSTOP -- это ни к чему не приведет
+		if (!error)//Не возникло ошибок?
 			goto wait_loop;
-		if (errno != ESRCH)
+		if (errno != ESRCH)//Возникла ошибка и она не связана с тем, что процесс не существует
 			perror_msg("detach: ptrace(PTRACE_INTERRUPT,%u)", tcp->pid);
 	}
 	else {
-		error = my_tkill(tcp->pid, SIGSTOP);
-		if (!error)
+		error = my_tkill(tcp->pid, SIGSTOP);//Отправляем процессу сигнал SIGSTOP
+		if (!error)//Ошибок нет -- идем ожидать завершения
 			goto wait_loop;
-		if (errno != ESRCH)
+		if (errno != ESRCH)//Возникла ошибка при попытки остановить процесс
 			perror_msg("detach: tkill(%u,SIGSTOP)", tcp->pid);
 	}
 	/* Either process doesn't exist, or some weird error. */
@@ -845,21 +857,26 @@ detach(struct tcb *tcp)
 	 * 1. We sent PTRACE_INTERRUPT (use_seize case)
 	 * 2. We sent SIGSTOP (!use_seize)
 	 * 3. Attach SIGSTOP was already pending (TCB_IGNORE_ONE_SIGSTOP set)
+	 *
+	 * Здесь мы можем оказаться в 3-х случаях:
+	 * 1. Мы послали процессу PTRACE_INTERRUPT (use_seize case)
+	 * 2. Мы послали процессу SIGSTOP
+	 * 3. SIGSTOP был уже отправлен
 	 */
 	for (;;) {
 		int sig;
-		if (waitpid(tcp->pid, &status, __WALL) < 0) {
-			if (errno == EINTR)
+		if (waitpid(tcp->pid, &status, __WALL) < 0) {//Ждем завершения процесса
+			if (errno == EINTR)//Вызов был прерван -- нужно снова подождать
 				continue;
 			/*
 			 * if (errno == ECHILD) break;
 			 * ^^^  WRONG! We expect this PID to exist,
 			 * and want to emit a message otherwise:
 			 */
-			perror_msg("detach: waitpid(%u)", tcp->pid);
+			perror_msg("detach: waitpid(%u)", tcp->pid);//Ошибка
 			break;
 		}
-		if (!WIFSTOPPED(status)) {
+		if (!WIFSTOPPED(status)) {//Процесс не был остановлен -- он вышел из-за какого-то сигнала, сюда мы не должны попадать в нормальных случаях
 			/*
 			 * Tracee exited or was killed by signal.
 			 * We shouldn't normally reach this place:
@@ -872,11 +889,11 @@ detach(struct tcb *tcp)
 			 */
 			break;
 		}
-		sig = WSTOPSIG(status);
+		sig = WSTOPSIG(status);//Запоминаем сигнал, который остановил процесс
 		if (debug_flag)
-			fprintf(stderr, "detach wait: event:%d sig:%d\n",
+			fprintf(stderr, "detach wait: event:%d sig:%d\n",//Вывод для отладки strace
 					(unsigned)status >> 16, sig);
-		if (use_seize) {
+		if (use_seize) {//use_seize-case
 			unsigned event = (unsigned)status >> 16;
 			if (event == PTRACE_EVENT_STOP /*&& sig == SIGTRAP*/) {
 				/*
@@ -926,7 +943,7 @@ detach(struct tcb *tcp)
 		}
 	}
 
- drop:
+ drop://Удаляем запись из таблицы процессов
 	if (!qflag && (tcp->flags & TCB_ATTACHED))
 		fprintf(stderr, "Process %u detached\n", tcp->pid);
 
@@ -962,7 +979,7 @@ process_opt_p_list(char *opt)
 		opt = delim + 1;//Следующая запись
 	}
 }
-
+//
 static void
 startup_attach(void)
 {
@@ -975,62 +992,65 @@ startup_attach(void)
 	 * between PTRACE_ATTACH and wait4() on SIGSTOP.
 	 * We rely on cleanup() from this point on.
 	 */
-	if (interactive)
+	if (interactive)//Добавляем в  blocked_set в набор блокируемых сигналов, если происходит работа в интерактивном режиме
 		sigprocmask(SIG_BLOCK, &blocked_set, NULL);
 
-	if (daemonized_tracer) {
+	if (daemonized_tracer) {//Если была указана опция -
 		pid_t pid = fork();
 		if (pid < 0) {
 			perror_msg_and_die("fork");
 		}
-		if (pid) { /* parent */
+		if (pid) { /* Родитель */
 			/*
-			 * Wait for grandchild to attach to straced process
-			 * (grandparent). Grandchild SIGKILLs us after it attached.
-			 * Grandparent's wait() is unblocked by our death,
-			 * it proceeds to exec the straced program.
+			 * Ожидаем, пока процесс-внук присоединится к процессу, который отслеживается
+			 * внук остановит работу текущего процесса после того, как присоединится
+			 * После смерти текущего процесса, процесс-дедушка выйдет из своего wait
+			 * Далее он запустит программу, которая должна будет остлеживаться
 			 */
 			pause();
 			_exit(0); /* paranoia */
 		}
-		/* grandchild */
-		/* We will be the tracer process. Remember our new pid: */
+		/*Этот процесс будет трейсером -- запоминаем наш новый pid*/
 		strace_tracer_pid = getpid();
 	}
 
 	for (tcbi = 0; tcbi < tcbtabsize; tcbi++) {
 		tcp = tcbtab[tcbi];
 
-		if (!tcp->pid)
+		if (!tcp->pid)//Если эта запись не имеет указанного пида -- переход к следующей итерации
 			continue;
 
-		/* Is this a process we should attach to, but not yet attached? */
+		/* Мы должны присоединиться к процессу tcp, но до сих пор не присоединены?*/
 		if (tcp->flags & TCB_ATTACHED)
-			continue; /* no, we already attached it */
+			continue; /* Нет, мы уже присоединены*/
 
+		/*Если не была указана опция -D и были указаны -f или -ff*/
+		/*Т.е. трэйсер не демон, и нужно следить за всемы тредами, порожденными
+		 * наблюдаемым процессом
+		 * Мы примоединяемся к каждому треду процесса*/
 		if (followfork && !daemonized_tracer) {
 			char procdir[sizeof("/proc/%d/task") + sizeof(int) * 3];
 			DIR *dir;
-
+			/*Открываем директорию указанного процесса*/
 			sprintf(procdir, "/proc/%d/task", tcp->pid);
 			dir = opendir(procdir);
-			if (dir != NULL) {
-				unsigned int ntid = 0, nerr = 0;
+			if (dir != NULL) {//Если директория открылась
+				unsigned int ntid = 0, nerr = 0;//Счетчики потоков и тредов
 				struct_dirent *de;
 
-				while ((de = read_dir(dir)) != NULL) {
+				while ((de = read_dir(dir)) != NULL) {//Читаем все записи в директории
 					struct tcb *cur_tcp;
 					int tid;
 
-					if (de->d_fileno == 0)
+					if (de->d_fileno == 0)//Если текущая запись -- символическая ссылка -- переходим к следующей
 						continue;
 					/* we trust /proc filesystem */
-					tid = atoi(de->d_name);
+					tid = atoi(de->d_name);//tid -- имя записи в директории
 					if (tid <= 0)
 						continue;
-					++ntid;
-					if (ptrace_attach_or_seize(tid) < 0) {
-						++nerr;
+					++ntid;//
+					if (ptrace_attach_or_seize(tid) < 0) {//Присоединяемся к потоку
+						++nerr;//Если не удалось -- увеличиваем счетчик ошибок, выводим сообщение и переходим к следующей итерации
 						if (debug_flag)
 							fprintf(stderr, "attach to pid %d failed\n", tid);
 						continue;
@@ -1038,52 +1058,51 @@ startup_attach(void)
 					if (debug_flag)
 						fprintf(stderr, "attach to pid %d succeeded\n", tid);
 					cur_tcp = tcp;
-					if (tid != tcp->pid)
+					if (tid != tcp->pid)//Если в процессе живет тред, номер которого не равен пиду, создаем новую запись в таблице отслеживаемых pidов
 						cur_tcp = alloctcb(tid);
-					cur_tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
-					newoutf(cur_tcp);
+					cur_tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;//Мы присоединились к текущему треду
+					newoutf(cur_tcp);//Создаем новый лог-файл, если требуется
 				}
-				closedir(dir);
-				if (interactive) {
-					sigprocmask(SIG_SETMASK, &empty_set, NULL);
+				closedir(dir);//Закрываем директорию /proc/<PID>/task
+				if (interactive) {//Если идет работа в интерактивном режиме, проверяем, прервана ли работа. Если да -- прекращаем работу текущего цикла
+					sigprocmask(SIG_SETMASK, &empty_set, NULL);//Запрещаем блокируемые сигналы
 					if (interrupted)
 						goto ret;
-					sigprocmask(SIG_BLOCK, &blocked_set, NULL);
+					sigprocmask(SIG_BLOCK, &blocked_set, NULL);//Возвращаем все как было
 				}
 				ntid -= nerr;
-				if (ntid == 0) {
+				if (ntid == 0) {//Если не удалось подсоединиться ни к одному из потоков
 					perror_msg("attach: ptrace(PTRACE_ATTACH, ...)");
-					droptcb(tcp);
+					droptcb(tcp);//Убираем запись о текущем пиде из таблицы
 					continue;
 				}
-				if (!qflag) {
-					fprintf(stderr, ntid > 1
-? "Process %u attached with %u threads\n"
-: "Process %u attached\n",
-						tcp->pid, ntid);
+				if (!qflag) {//Если нужно, пишем сообщение об присоединении
+					fprintf(stderr, ntid > 1 ? "Process %u attached with %u threads\n" : "Process %u attached\n", tcp->pid, ntid);
 				}
 				if (!(tcp->flags & TCB_ATTACHED)) {
-					/* -p PID, we failed to attach to PID itself
-					 * but did attach to some of its sibling threads.
-					 * Drop PID's tcp.
+					/* -p PID,мы не смогли подключиться к самому PID-у,
+					 * но смогли к одному из его тредов.
+					 * Убираем запись о пиде из таблицы (там сохранятся записи об его тредах, к которым удалось подсоединиться)
 					 */
 					droptcb(tcp);
 				}
 				continue;
 			} /* if (opendir worked) */
 		} /* if (-f) */
+		//Присоединяемся к pid-у
 		if (ptrace_attach_or_seize(tcp->pid) < 0) {
 			perror_msg("attach: ptrace(PTRACE_ATTACH, ...)");
-			droptcb(tcp);
+			droptcb(tcp);//Ошибка. Убираем запись о треде из таблцы
 			continue;
 		}
-		tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
-		newoutf(tcp);
+		tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;//Устанавливаем нужные флаги
+		newoutf(tcp);//Создаем выходной файл, если нужно
 		if (debug_flag)
 			fprintf(stderr, "attach to pid %d (main) succeeded\n", tcp->pid);
 
 		if (daemonized_tracer) {
 			/*
+			 * Убиваем родителя, если указана опция -D
 			 * Make parent go away.
 			 * Also makes grandparent's wait() unblock.
 			 */
@@ -1097,7 +1116,7 @@ startup_attach(void)
 	} /* for each tcbtab[] */
 
  ret:
-	if (interactive)
+	if (interactive)//Если интерактивный режим, ставим empty_set вместо списка сигналов, которые могут блокировать
 		sigprocmask(SIG_SETMASK, &empty_set, NULL);
 }
 
@@ -1129,22 +1148,22 @@ exec_or_die(void)
 		 * It is important to set groups before we
 		 * lose privileges on setuid.
 		 */
-		if (initgroups(username, run_gid) < 0) {
+		if (initgroups(username, run_gid) < 0) {//Получаем gid пользователя
 			perror_msg_and_die("initgroups");
 		}
-		if (setregid(run_gid, params->run_egid) < 0) {
+		if (setregid(run_gid, params->run_egid) < 0) {//Устанавливаем rgid текущего процесса в run_gid и effective gid в params->run_egid
 			perror_msg_and_die("setregid");
 		}
-		if (setreuid(run_uid, params->run_euid) < 0) {
+		if (setreuid(run_uid, params->run_euid) < 0) {//Устанавливаем ruid текущего процесса в run_uid и effective uid в params->run_euid
 			perror_msg_and_die("setreuid");
 		}
 	}
-	else if (geteuid() != 0)
-		if (setreuid(run_uid, run_uid) < 0) {
+	else if (geteuid() != 0)//Если имя не указано
+		if (setreuid(run_uid, run_uid) < 0) {//Просто устанавливаем ruid и effective uid
 			perror_msg_and_die("setreuid");
 		}
 
-	if (!daemonized_tracer) {
+	if (!daemonized_tracer) {//Если не была указана опция -D
 		/*
 		 * Induce a ptrace stop. Tracer (our parent)
 		 * will resume us with PTRACE_SYSCALL and display
@@ -1153,17 +1172,17 @@ exec_or_die(void)
 		 * vfork: parent is blocked, stopping would deadlock.
 		 */
 		if (!NOMMU_SYSTEM)
-			kill(getpid(), SIGSTOP);
+			kill(getpid(), SIGSTOP);//Останавливаем выполнение текущего процесса до того, как получим сигнал продолжения от родителя
 	} else {
-		alarm(3);
+		alarm(3);//Планируем SIGALRM через 3 секунды
 		/* we depend on SIGCHLD set to SIG_DFL by init code */
 		/* if it happens to be SIG_IGN'ed, wait won't block */
-		wait(NULL);
-		alarm(0);
+		wait(NULL);//Ждем, пока ребенок закончит работу
+		alarm(0);//Отменяем запланированный SIGALRM
 	}
 
-	execv(params->pathname, params->argv);
-	perror_msg_and_die("exec");
+	execv(params->pathname, params->argv);//Запуск указанной программы на исполнение
+	perror_msg_and_die("exec");//Ошибка. Мы не должны были попасть сюда
 }
 /*Функция для старта дочернего процесса, если strace вызван путем strace FILE*/
 static void
@@ -1267,7 +1286,7 @@ startup_child(char **argv)
 	/* Этот процесс является трейсером*/
 
 	if (!daemonized_tracer) {//В процессе-трейсере
-		strace_child = pid; //Запоминаем pid ребенка
+		strace_child = pid; //Запоминаем pid strace-ребенка
 		if (!use_seize) {
 			/* child did PTRACE_TRACEME, nothing to do in parent */
 		} else {
@@ -1336,15 +1355,15 @@ startup_child(char **argv)
 }
 
 /*
- * Test whether the kernel support PTRACE_O_TRACECLONE et al options.
- * First fork a new child, call ptrace with PTRACE_SETOPTIONS on it,
- * and then see which options are supported by the kernel.
+ * Проверяет, поддерживает ли ядро опцию PTRACE_O_TRACECLONE и др.
+ * Сначала создает новый дочерний процесс, вызывает ptrace c опцией PTRACE_SETOPTIONS
+ * далее проверяет какие опции поддерживаются ядром
  */
 static int
 test_ptrace_setoptions_followfork(void)
 {
 	int pid, expected_grandchild = 0, found_grandchild = 0;
-	const unsigned int test_options = PTRACE_O_TRACECLONE |
+	const unsigned int test_options = PTRACE_O_TRACECLONE | //Опции для проверки
 					  PTRACE_O_TRACEFORK |
 					  PTRACE_O_TRACEVFORK;
 
@@ -1353,58 +1372,58 @@ test_ptrace_setoptions_followfork(void)
 		goto worked; /* be bold, and pretend that test succeeded */
 
 	pid = fork();
-	if (pid < 0)
+	if (pid < 0)//Ошибка при вызове fork
 		perror_msg_and_die("fork");
-	if (pid == 0) {
-		pid = getpid();
-		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0)
-			perror_msg_and_die("%s: PTRACE_TRACEME doesn't work",
+	if (pid == 0) { //Процесс-ребенок
+		pid = getpid(); //Запоминаем пид
+		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0) //Вызываем ptrace для теста
+			perror_msg_and_die("%s: PTRACE_TRACEME doesn't work", //Ошибка
 					   __func__);
 		kill_save_errno(pid, SIGSTOP);
-		if (fork() < 0)
-			perror_msg_and_die("fork");
-		_exit(0);
+		if (fork() < 0)//Создаем еще одну копию
+			perror_msg_and_die("fork");//Ошибка при создании копии
+		_exit(0);//Выход дочернего процесса и процесса, который он породил
 	}
 
 	while (1) {
 		int status, tracee_pid;
 
 		errno = 0;
-		tracee_pid = wait(&status);
+		tracee_pid = wait(&status);//Ждет смерти потомка
 		if (tracee_pid <= 0) {
-			if (errno == EINTR)
+			if (errno == EINTR)//Ошибка: потомок не может быть прерван
 				continue;
-			if (errno == ECHILD)
+			if (errno == ECHILD)//Нет дочерних процессов
 				break;
-			kill_save_errno(pid, SIGKILL);
+			kill_save_errno(pid, SIGKILL);//Убиваем дочерний процесс -- ошибка
 			perror_msg_and_die("%s: unexpected wait result %d",
 					   __func__, tracee_pid);
 		}
-		if (WIFEXITED(status)) {
-			if (WEXITSTATUS(status)) {
-				if (tracee_pid != pid)
+		if (WIFEXITED(status)) {//Если дочерний процесс закончился нормально
+			if (WEXITSTATUS(status)) {//Проверяем return value
+				if (tracee_pid != pid)//Убиваем процесс-потомок, если это не потомок главного процесса
 					kill_save_errno(pid, SIGKILL);
 				error_msg_and_die("%s: unexpected exit status %u",
 						  __func__, WEXITSTATUS(status));
 			}
 			continue;
 		}
-		if (WIFSIGNALED(status)) {
-			if (tracee_pid != pid)
+		if (WIFSIGNALED(status)) {//Проверяем, был ли потомок остановлен из-за сигнала
+			if (tracee_pid != pid)//Убиваем процесс-потомок, если это не потомок главного процесса
 				kill_save_errno(pid, SIGKILL);
 			error_msg_and_die("%s: unexpected signal %u",
 					  __func__, WTERMSIG(status));
 		}
-		if (!WIFSTOPPED(status)) {
-			if (tracee_pid != pid)
+		if (!WIFSTOPPED(status)) {//Проверяет, был ли потомок остановлен
+			if (tracee_pid != pid)//Убиваем процесс-потомок, если это не потомок главного процесса
 				kill_save_errno(tracee_pid, SIGKILL);
-			kill_save_errno(pid, SIGKILL);
+			kill_save_errno(pid, SIGKILL);//Убиваем так же процесс--потомок
 			error_msg_and_die("%s: unexpected wait status %x",
 					  __func__, status);
 		}
-		if (tracee_pid != pid) {
+		if (tracee_pid != pid) {//Проверяем, находимся ли мы в процессе-внуке
 			found_grandchild = tracee_pid;
-			if (ptrace(PTRACE_CONT, tracee_pid, 0, 0) < 0) {
+			if (ptrace(PTRACE_CONT, tracee_pid, 0, 0) < 0) {//Проверяем, работает ли опция PTRACE_CONT
 				kill_save_errno(tracee_pid, SIGKILL);
 				kill_save_errno(pid, SIGKILL);
 				perror_msg_and_die("PTRACE_CONT doesn't work");
@@ -1412,33 +1431,33 @@ test_ptrace_setoptions_followfork(void)
 			continue;
 		}
 		switch (WSTOPSIG(status)) {
-		case SIGSTOP:
-			if (ptrace(PTRACE_SETOPTIONS, pid, 0, test_options) < 0
+		case SIGSTOP://Если процесс получил SIGSTOP
+			if (ptrace(PTRACE_SETOPTIONS, pid, 0, test_options) < 0//Проверяем работу опции PTRACE_SETOPTIONS
 			    && errno != EINVAL && errno != EIO)
 				perror_msg("PTRACE_SETOPTIONS");
 			break;
-		case SIGTRAP:
+		case SIGTRAP: //Если процесс получил SIGSTOP
 			if (status >> 16 == PTRACE_EVENT_FORK) {
 				long msg = 0;
 
 				if (ptrace(PTRACE_GETEVENTMSG, pid,
-					   NULL, (long) &msg) == 0)
+					   NULL, (long) &msg) == 0)//Проверяем работу опции PTRACE_GETEVENTMSG
 					expected_grandchild = msg;
 			}
 			break;
 		}
-		if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {
+		if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {//Проверяем работу опции PTRACE_SYSCALL
 			kill_save_errno(pid, SIGKILL);
 			perror_msg_and_die("PTRACE_SYSCALL doesn't work");
 		}
 	}
-	if (expected_grandchild && expected_grandchild == found_grandchild) {
+	if (expected_grandchild && expected_grandchild == found_grandchild) {//Попадем внутрь, если все опции работают
  worked:
-		ptrace_setoptions |= test_options;
+		ptrace_setoptions |= test_options;//Добавляем проверенные опции
 		if (debug_flag)
 			fprintf(stderr, "ptrace_setoptions = %#x\n",
 				ptrace_setoptions);
-		return 0;
+		return 0;//Отработали успешно
 	}
 	error_msg("Test for PTRACE_O_TRACECLONE failed, "
 		  "giving up using this feature.");
@@ -1459,6 +1478,14 @@ _start:		.globl	_start
 		movl	$42, %ebx
 		movl	$1, %eax
 		int	$0x80
+*//*
+ * Проверяет поддержку ядром PTRACE_O_TRACESYSGOOD
+ * сначала пораждает ребенка, затем вызвает в нем ptrace(PTRACE_SETOPTIONS)
+ * и смотрит, остановится ли он со статусом SIGTRAP | 0x80
+ *
+ * Использование опции PTRACE_O_TRACESYSGOOD позволяет корректно обрабатывать
+ * SIGTRAP-ы, сгенерированные пользователем и SIGTRAP-ы, сгенерированные специальными инструкциями
+ * такимми, как int3 в x86
  */
 static int
 test_ptrace_setoptions_for_all(void)
@@ -1469,74 +1496,75 @@ test_ptrace_setoptions_for_all(void)
 	int it_worked = 0;
 
 	/* Need fork for test. NOMMU has no forks */
+	/*Невозможно протестировать в no-MMU-системах*/
 	if (NOMMU_SYSTEM)
 		goto worked; /* be bold, and pretend that test succeeded */
 
-	pid = fork();
+	pid = fork();//Создаем копию процесса
 	if (pid < 0)
-		perror_msg_and_die("fork");
+		perror_msg_and_die("fork");//Ошибка при fork
 
-	if (pid == 0) {
-		pid = getpid();
-		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0)
+	if (pid == 0) {//В ребенке
+		pid = getpid();//Запоминаеам свой пид
+		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0)//Вызываем ptrace(PTRACE_TRACEME
 			/* Note: exits with exitcode 1 */
 			perror_msg_and_die("%s: PTRACE_TRACEME doesn't work",
 					   __func__);
-		kill(pid, SIGSTOP);
+		kill(pid, SIGSTOP);//Останавливаем себя
 		_exit(0); /* parent should see entry into this syscall */
 	}
 
-	while (1) {
+	while (1) {//Основной цикл родителя
 		int status, tracee_pid;
 
 		errno = 0;
-		tracee_pid = wait(&status);
+		tracee_pid = wait(&status);//Ждем остановки процесса
 		if (tracee_pid <= 0) {
 			if (errno == EINTR)
-				continue;
-			kill_save_errno(pid, SIGKILL);
+				continue;//Вызов был прерван-- повторяем цикл
+			kill_save_errno(pid, SIGKILL);//Убиваем потомка, в случае другой ошибки
 			perror_msg_and_die("%s: unexpected wait result %d",
 					   __func__, tracee_pid);
 		}
-		if (WIFEXITED(status)) {
+		if (WIFEXITED(status)) {//Вышел ли потомок?
 			if (WEXITSTATUS(status) == 0)
-				break;
-			error_msg_and_die("%s: unexpected exit status %u",
+				break;//Потомок нормально завершил работу
+			error_msg_and_die("%s: unexpected exit status %u", //Потомок завершил работу не нормально -- ошибка
 					  __func__, WEXITSTATUS(status));
 		}
-		if (WIFSIGNALED(status)) {
+		if (WIFSIGNALED(status)) {//Если потомок завершил работу из-за возникнованеия сигнала- -- ошибка
 			error_msg_and_die("%s: unexpected signal %u",
 					  __func__, WTERMSIG(status));
 		}
-		if (!WIFSTOPPED(status)) {
-			kill(pid, SIGKILL);
+		if (!WIFSTOPPED(status)) {//Если потомок не остановлен
+			kill(pid, SIGKILL);//Убиваем потомка -- это ошибка
 			error_msg_and_die("%s: unexpected wait status %x",
 					  __func__, status);
 		}
-		if (WSTOPSIG(status) == SIGSTOP) {
+		if (WSTOPSIG(status) == SIGSTOP) {//Потомок остановлен сигналом SIGSTOP -- то, чего мы ожидаем
 			/*
 			 * We don't check "options aren't accepted" error.
 			 * If it happens, we'll never get (SIGTRAP | 0x80),
 			 * and thus will decide to not use the option.
 			 * IOW: the outcome of the test will be correct.
 			 */
-			if (ptrace(PTRACE_SETOPTIONS, pid, 0L, test_options) < 0
+			if (ptrace(PTRACE_SETOPTIONS, pid, 0L, test_options) < 0//Пробуем прицепиться установить опции для ptrace
 			    && errno != EINVAL && errno != EIO)
 				perror_msg("PTRACE_SETOPTIONS");
 		}
-		if (WSTOPSIG(status) == (SIGTRAP | 0x80)) {
+		if (WSTOPSIG(status) == (SIGTRAP | 0x80)) {//Снова проверяем статус
 			it_worked = 1;
 		}
-		if (ptrace(PTRACE_SYSCALL, pid, 0L, 0L) < 0) {
+		if (ptrace(PTRACE_SYSCALL, pid, 0L, 0L) < 0) {//Пробуем отслеживать системные вызовы потомка
 			kill_save_errno(pid, SIGKILL);
 			perror_msg_and_die("PTRACE_SYSCALL doesn't work");
 		}
 	}
 
-	if (it_worked) {
+	if (it_worked) {//Прошли ли проверки успешно?
  worked:
-		syscall_trap_sig = (SIGTRAP | 0x80);
-		ptrace_setoptions |= test_options;
+		syscall_trap_sig = (SIGTRAP | 0x80); //Если да -- устанавливаем значение сигнала
+		ptrace_setoptions |= test_options; //Добавляем наши опции к ptrace_setoptions
 		if (debug_flag)
 			fprintf(stderr, "ptrace_setoptions = %#x\n",
 				ptrace_setoptions);
@@ -1549,6 +1577,7 @@ test_ptrace_setoptions_for_all(void)
 }
 
 #if USE_SEIZE
+//Проверяет работу PTRACE_SEIZE
 static void
 test_ptrace_seize(void)
 {
@@ -1556,14 +1585,15 @@ test_ptrace_seize(void)
 
 	/* Need fork for test. NOMMU has no forks */
 	if (NOMMU_SYSTEM) {
-		post_attach_sigstop = 0; /* this sets use_seize to 1 */
+		post_attach_sigstop = 0; /* Это приведет к установке use_seize в 1 */
 		return;
 	}
 
-	pid = fork();
+	pid = fork();//Создаем копию процесса
 	if (pid < 0)
-		perror_msg_and_die("fork");
+		perror_msg_and_die("fork");//Ошибка
 
+	//Останавливаем потомка и выходим после получения сигнала
 	if (pid == 0) {
 		pause();
 		_exit(0);
@@ -1572,27 +1602,30 @@ test_ptrace_seize(void)
 	/* PTRACE_SEIZE, unlike ATTACH, doesn't force tracee to trap.  After
 	 * attaching tracee continues to run unless a trap condition occurs.
 	 * PTRACE_SEIZE doesn't affect signal or group stop state.
+	 * PTRACE_SEIZE в отличии от ATTACH не приводит отслеживаемый процесс к попаданию в trap
+	 * После присоединения, отслеживаемый процесс продолжит работу, если не возникнет trap-conditions
+	 * PTRACE_SEIZE не оказывает влияения на сигналльное состоянии или групповую остановку.
 	 */
 	if (ptrace(PTRACE_SEIZE, pid, 0, 0) == 0) {
-		post_attach_sigstop = 0; /* this sets use_seize to 1 */
+		post_attach_sigstop = 0; /* Это приведет к установке use_seize в 1 */
 	} else if (debug_flag) {
-		fprintf(stderr, "PTRACE_SEIZE doesn't work\n");
+		fprintf(stderr, "PTRACE_SEIZE doesn't work\n"); //Проверка провалилась
 	}
 
-	kill(pid, SIGKILL);
+	kill(pid, SIGKILL); //Убиваем потомка
 
 	while (1) {
 		int status, tracee_pid;
 
 		errno = 0;
-		tracee_pid = waitpid(pid, &status, 0);
-		if (tracee_pid <= 0) {
+		tracee_pid = waitpid(pid, &status, 0); //Ожидаем потомка
+		if (tracee_pid <= 0) {//Ошибка
 			if (errno == EINTR)
-				continue;
-			perror_msg_and_die("%s: unexpected wait result %d",
+				continue;//В случае, если вызов был прерван, производим еще одну итерацию
+			perror_msg_and_die("%s: unexpected wait result %d",//Иначе -- возникла ошибка
 					 __func__, tracee_pid);
 		}
-		if (WIFSIGNALED(status)) {
+		if (WIFSIGNALED(status)) { //Выходим, если потомок был остановлен из-за возникновения сигнала
 			return;
 		}
 		error_msg_and_die("%s: unexpected wait status %x",
@@ -1912,21 +1945,21 @@ init(int argc, char *argv[])
 	 */
 	/*need_fork_exec_workarounds = 0; - already is */
 	if (followfork)
-		need_fork_exec_workarounds = test_ptrace_setoptions_followfork();
-	need_fork_exec_workarounds |= test_ptrace_setoptions_for_all();
-	test_ptrace_seize();
+		need_fork_exec_workarounds = test_ptrace_setoptions_followfork();//Проверяем работу некоторых опций ptrace. В случае успеха вернет 0
+	need_fork_exec_workarounds |= test_ptrace_setoptions_for_all(); //Проверяем работу некоторых опций ptrace. В случае успеха вернет 0
+	test_ptrace_seize();//Проверяем работу PTRACE_SEIZE
 
 	/* Нужно ли перенаправлять вывод в файл?*/
 	if (outfname) {
 		/* Если указан pipe */
-		if (outfname[0] == '|' || outfname[0] == '!') {
+		if (outfname[0] == '|' || outfname[0] == '!') {//Если параметра начинается с '|' или '!' -- он трактуется, как имя команды, которая будет запущена и stdin которой будет связан с strace, через пайп
 			/*
 			 * Мы не сможем выводить в файл <outfname>.PID,
 			 * если нужно выводить в пайп
 			 */
 			if (followfork >= 2)//Ошибка
 				error_msg_and_die("Piping the output and -ff are mutually exclusive");
-			shared_log = strace_popen(outfname + 1);//Открываем лог
+			shared_log = strace_popen(outfname + 1);//Открываем лог в случае, если имя выходного файла начинается с '|' или '!'
 		}
 		else if (followfork < 2)//Открываем лог
 			shared_log = strace_fopen(outfname);
@@ -2015,24 +2048,27 @@ init(int argc, char *argv[])
 	 */
 	print_pid_pfx = (outfname && followfork < 2 && (followfork == 1 || nprocs > 1));
 }
-
+/* Возвращает запись из таблицы пидов, соответствующую указанному pid
+ * если запись не найдена -- вернет NULL
+*/
 static struct tcb *
 pid2tcb(int pid)
 {
 	int i;
 
-	if (pid <= 0)
+	if (pid <= 0)//Неправильный пид
 		return NULL;
 
-	for (i = 0; i < tcbtabsize; i++) {
+	for (i = 0; i < tcbtabsize; i++) {//Перебираем записи в таблице
 		struct tcb *tcp = tcbtab[i];
 		if (tcp->pid == pid)
-			return tcp;
+			return tcp;//Запись найдена
 	}
 
-	return NULL;
+	return NULL;//Запись не найдена
 }
 
+//Освобождение ресурсов
 static void
 cleanup(void)
 {
@@ -2042,32 +2078,34 @@ cleanup(void)
 
 	/* 'interrupted' is a volatile object, fetch it only once */
 	fatal_sig = interrupted;
-	if (!fatal_sig)
+	if (!fatal_sig)//Проверяем, был ли выход вызван установкой interrupted
 		fatal_sig = SIGTERM;
 
-	for (i = 0; i < tcbtabsize; i++) {
+	for (i = 0; i < tcbtabsize; i++) {//Убиваем процессы или вызываем для них detach
 		tcp = tcbtab[i];
-		if (!tcp->pid)
+		if (!tcp->pid)//Пид уже обнулен
 			continue;
 		if (debug_flag)
 			fprintf(stderr,
 				"cleanup: looking at pid %u\n", tcp->pid);
-		if (tcp->pid == strace_child) {
+		if (tcp->pid == strace_child) {//
 			kill(tcp->pid, SIGCONT);
 			kill(tcp->pid, fatal_sig);
 		}
 		detach(tcp);
 	}
 	if (cflag)
-		call_summary(shared_log);
+		call_summary(shared_log);//Вывод итоговой информации в лог
 }
-
+//Установить interrupted
 static void
 interrupt(int sig)
 {
 	interrupted = sig;
 }
 
+
+/*Главная функция сбора информации*/
 static void
 trace(void)
 {
@@ -2090,59 +2128,62 @@ trace(void)
 	while (1) {
 		int pid;
 		int wait_errno;
-		int status, sig;
+		int status, sig;//Для запоминания статуса прерванного процесса и сигнала, который вызвал прерывание
 		int stopped;
 		struct tcb *tcp;
 		unsigned event;
 
-		if (interrupted)
+		if (interrupted)//Выход, если был послан сигнал прекращения работы
 			return;
 
-		if (popen_pid != 0 && nprocs == 0)
+		if (popen_pid != 0 && nprocs == 0)//Нет открытых процессов
 			return;
 
-		if (interactive)
+		if (interactive)//Установка сигналов, которые могут вызывать остановку процессов на empty_set
 			sigprocmask(SIG_SETMASK, &empty_set, NULL);
-		pid = wait4(-1, &status, __WALL, (cflag ? &ru : NULL));
+		pid = wait4(-1, &status, __WALL, (cflag ? &ru : NULL));//-1 -- ожидать любой пид __WALL -- ожидать всех потомков вне зависимости от типа
+																//в зависимости о cflags, либо будет запомнена структура ru, либо нет. в ней
+																//могут храниться ограничения на ресурсы
+
 		wait_errno = errno;
-		if (interactive)
+		if (interactive)//Возвращаем обратно  сигналы
 			sigprocmask(SIG_BLOCK, &blocked_set, NULL);
 
-		if (pid < 0) {
-			if (wait_errno == EINTR)
+		if (pid < 0) {//Был ли wait завершен без ошибки?
+			if (wait_errno == EINTR)//Вызов был прерван -- перходим к следующей итерации
 				continue;
-			if (nprocs == 0 && wait_errno == ECHILD)
+			if (nprocs == 0 && wait_errno == ECHILD)//Пид не был возвращен, тк. нет детей
 				return;
 			/* If nprocs > 0, ECHILD is not expected,
 			 * treat it as any other error here:
 			 */
-			errno = wait_errno;
+			errno = wait_errno;//Ошибка
 			perror_msg_and_die("wait4(__WALL)");
 		}
 
-		if (pid == popen_pid) {
+		if (pid == popen_pid) {//вызвано прерывание в логгере
 			if (!WIFSTOPPED(status))
-				popen_pid = 0;
+				popen_pid = 0;//Логгера больше нет. Продолжаем без него
 			continue;
 		}
 
 		event = ((unsigned)status >> 16);
-		if (debug_flag) {
+		if (debug_flag) {//Если ведется дебаг strace
 			char buf[sizeof("WIFEXITED,exitcode=%u") + sizeof(int)*3 /*paranoia:*/ + 16];
 			char evbuf[sizeof(",EVENT_VFORK_DONE (%u)") + sizeof(int)*3 /*paranoia:*/ + 16];
 			strcpy(buf, "???");
-			if (WIFSIGNALED(status))
+			if (WIFSIGNALED(status))//Возник ли в дочернем процессе сигнал, который вызвал его озавершение?
 #ifdef WCOREDUMP
 				sprintf(buf, "WIFSIGNALED,%ssig=%s",
 						WCOREDUMP(status) ? "core," : "",
-						signame(WTERMSIG(status)));
+						signame(WTERMSIG(status)));//Печатаем в буффер информацию о вызвавшем прерывание сигнале
 #else
 				sprintf(buf, "WIFSIGNALED,sig=%s",
 						signame(WTERMSIG(status)));
 #endif
-			if (WIFEXITED(status))
+			if (WIFEXITED(status))//Если дочерний процесс вышел -- печатаем информацию о коде завершения
 				sprintf(buf, "WIFEXITED,exitcode=%u", WEXITSTATUS(status));
-			if (WIFSTOPPED(status))
+			if (WIFSTOPPED(status))//Если дочерний процесс был приостановлен -- печатаем информацию о сигнале, вызвавшем это
 				sprintf(buf, "WIFSTOPPED,sig=%s", signame(WSTOPSIG(status)));
 #ifdef WIFCONTINUED
 			/* Should never be seen */
@@ -2150,7 +2191,7 @@ trace(void)
 				strcpy(buf, "WIFCONTINUED");
 #endif
 			evbuf[0] = '\0';
-			if (event != 0) {
+			if (event != 0) {//((unsigned)status >> 16) !=0 -- Печатаем в буффер информацию о событии
 				static const char *const event_names[] = {
 					[PTRACE_EVENT_CLONE] = "CLONE",
 					[PTRACE_EVENT_FORK]  = "FORK",
@@ -2165,44 +2206,45 @@ trace(void)
 					e = event_names[event];
 				else if (event == PTRACE_EVENT_STOP)
 					e = "STOP";
-				sprintf(evbuf, ",EVENT_%s (%u)", e, event);
+				sprintf(evbuf, ",EVENT_%s (%u)", e, event);//Печатаем в буффер информацию о событии
 			}
-			fprintf(stderr, " [wait(0x%06x) = %u] %s%s\n", status, pid, buf, evbuf);
+			fprintf(stderr, " [wait(0x%06x) = %u] %s%s\n", status, pid, buf, evbuf);//Выводим в stderr отладочную информацию
 		}
 
-		/* Look up 'pid' in our table. */
+		/* Ищем пид в таблице */
 		tcp = pid2tcb(pid);
 
-		if (!tcp) {
+		if (!tcp) {//Пид не был найден
 			if (!WIFSTOPPED(status)) {
 				/* This can happen if we inherited
-				 * an unknown child. Example:
+				 * an unknown child.
+				 * Такое может случиться, если был унаследован  потомок, который нам неизвестен
+				 * Example:
 				 * (sleep 1 & exec strace sleep 2)
 				 */
-				error_msg("Exit of unknown pid %u seen", pid);
+				error_msg("Exit of unknown pid %u seen", pid);//Был остановлен неизвестный потомок
 				continue;
 			}
-			if (followfork) {
+			if (followfork) {//Требуется ли отслеживать все порожденные процессы?
 				/* We assume it's a fork/vfork/clone child */
-				tcp = alloctcb(pid);
-				tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
-				newoutf(tcp);
-				if (!qflag)
+				tcp = alloctcb(pid);//Это новый потомок
+				tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;//Ставим ему соответствующие флаги
+				newoutf(tcp);//Создаем новый выходной файл, если нужно
+				if (!qflag)//И выводим информацию, если нужно
 					fprintf(stderr, "Process %d attached\n",
 						pid);
 			} else {
 				/* This can happen if a clone call used
 				 * CLONE_PTRACE itself.
 				 */
-				ptrace(PTRACE_CONT, pid, (char *) 0, 0);
+				ptrace(PTRACE_CONT, pid, (char *) 0, 0);//Ошибка в случае, если процесс-клон вызвал ptrace с параметром CLONE_PTRACE и своим pid-ом
 				error_msg("Stop of unknown pid %u seen, PTRACE_CONTed it", pid);
 				continue;
 			}
 		}
-
-		clear_regs();
-		if (WIFSTOPPED(status))
-			get_regs(pid);
+		clear_regs();//Сброс get_regs_error
+		if (WIFSTOPPED(status))//Если процесс, в котором возникло прерывание был остановлен
+			get_regs(pid);//Запоминаем регистры для pid
 
 		/* Under Linux, execve changes pid to thread leader's pid,
 		 * and we see this changed pid on EVENT_EXEC and later,
@@ -2217,23 +2259,37 @@ trace(void)
 		 *
 		 * PTRACE_GETEVENTMSG returns old pid starting from Linux 3.0.
 		 * On 2.6 and earlier, it can return garbage.
+		 *
+		 * В линукс вызов execve изменяет пид процесса на пид ведущего процесса
+		 * Поэжтому мы увидим измененный пид в EVENT_EXEC и далее
+		 * Процесс-лидер исчезает без сообщения о выходе. Мы даем знать пользователю,
+		 * что мы сбрасываем запись о лидере из таблицы пидов
+		 * и исправляем пид в таблице пидов процесса, порожденного execve
+		 * Проще говоря, таблица пидов execve-потока заменяет оную таблицу процесса-лидера
+		 *
+		 * Кстати, процесс-лидер превращается в зомби (не сообщает сигнала WIFEXITED)
+		 * при вызове системного вызова exit) в многопоточных программах именно для того,
+		 * чтобы учесть этот случай.
+		 *
+		 * PTRACE_GETEVENTMSG возвращает старый пид, начиная с версии ядра 3.0
+		 * В 2.6 и более ранних, он может вернуть мусор.
 		 */
-		if (event == PTRACE_EVENT_EXEC && os_release >= KERNEL_VERSION(3,0,0)) {
+		if (event == PTRACE_EVENT_EXEC && os_release >= KERNEL_VERSION(3,0,0)) {//Возникло событие PTRACE_EVENT_EXEC в ядре новее, чем 3.0
 			FILE *fp;
 			struct tcb *execve_thread;
 			long old_pid = 0;
 
-			if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, (long) &old_pid) < 0)
-				goto dont_switch_tcbs;
+			if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, (long) &old_pid) < 0)//Берем информацию о только что возникшем событии
+				goto dont_switch_tcbs;//Если при вызове возникла ошибка -- переходим к dont_switch_tcbs
 			/* Avoid truncation in pid2tcb() param passing */
-			if (old_pid > UINT_MAX)
-				goto dont_switch_tcbs;
-			if (old_pid <= 0 || old_pid == pid)
-				goto dont_switch_tcbs;
-			execve_thread = pid2tcb(old_pid);
+			if (old_pid > UINT_MAX)//Чтобы избежать ветвления в таблице пидов
+				goto dont_switch_tcbs;//переходим к dont_switch_tcbs
+			if (old_pid <= 0 || old_pid == pid)//Старый пид не был установлен или новый пид равен старому
+				goto dont_switch_tcbs;//переходим к dont_switch_tcbs
+			execve_thread = pid2tcb(old_pid);//Ищем запись об old_pid в таблице
 			/* It should be !NULL, but I feel paranoid */
 			if (!execve_thread)
-				goto dont_switch_tcbs;
+				goto dont_switch_tcbs;//Если информации о старом pid нет в таблице--переходим к dont_switch_tcbs
 
 			if (execve_thread->curcol != 0) {
 				/*
@@ -2244,49 +2300,54 @@ trace(void)
 				/*execve_thread->curcol = 0; - no need, see code below */
 			}
 			/* Swap output FILEs (needed for -ff) */
+			/*Меняем местами выходные файлы*/
 			fp = execve_thread->outf;
 			execve_thread->outf = tcp->outf;
 			tcp->outf = fp;
 			/* And their column positions */
+			/* Номера текущих столбцов так же меняются местами*/
 			execve_thread->curcol = tcp->curcol;
 			tcp->curcol = 0;
 			/* Drop leader, but close execve'd thread outfile (if -ff) */
+			/* Убираем запись о лидере, но закрываем выводной файл для execve-треда */
 			droptcb(tcp);
 			/* Switch to the thread, reusing leader's outfile and pid */
+			/*Переключаем треды, используя выводной файл лидера*/
 			tcp = execve_thread;
 			tcp->pid = pid;
-			if (cflag != CFLAG_ONLY_STATS) {
-				printleader(tcp);
-				tprintf("+++ superseded by execve in pid %lu +++\n", old_pid);
-				line_ended();
-				tcp->flags |= TCB_REPRINT;
+			if (cflag != CFLAG_ONLY_STATS) {//Если дополнительный лог == CFLAG_ONLY_STATS
+				printleader(tcp);//Печатаем шапку
+				tprintf("+++ superseded by execve in pid %lu +++\n", old_pid);//Печатаем информацию о том, что поток был заморожен при вызове execve
+				line_ended();//Начинаем новую строку
+				tcp->flags |= TCB_REPRINT;//Флаг того, что нужно снова напечатать шапку
 			}
 		}
+
  dont_switch_tcbs:
 
-		if (event == PTRACE_EVENT_EXEC) {
+		if (event == PTRACE_EVENT_EXEC) { //Возникло событие PTRACE_EVENT_EXEC?
 			if (detach_on_execve && !skip_one_b_execve)
-				detach(tcp); /* do "-b execve" thingy */
-			skip_one_b_execve = 0;
+				detach(tcp); /* Отцепляемся от указанного процесса */
+			skip_one_b_execve = 0;//Сбрасываем флаг того, что strace вызван как strace PROG  и мы должны скрыть отсоединение при первом вызове execve
 		}
 
-		/* Set current output file */
+		/* Установка текущего выходного файла */
 		current_tcp = tcp;
 
-		if (cflag) {
+		if (cflag) {//Если требуется запоминать дополнительную информацию -- делаем это
 			tv_sub(&tcp->dtime, &ru.ru_stime, &tcp->stime);
 			tcp->stime = ru.ru_stime;
 		}
 
-		if (WIFSIGNALED(status)) {
-			if (pid == strace_child)
+		if (WIFSIGNALED(status)) {//Процесс был засигнален?
+			if (pid == strace_child)//strace_child -- Процесс-демон и он был остановлен сигналом
 				exit_code = 0x100 | WTERMSIG(status);
-			if (cflag != CFLAG_ONLY_STATS
-			 && (qual_flags[WTERMSIG(status)] & QUAL_SIGNAL)
+			if (cflag != CFLAG_ONLY_STATS//Нужно собирать дополнительную информацию CFLAG_ONLY_STATS
+			 && (qual_flags[WTERMSIG(status)] & QUAL_SIGNAL) // И если в массиве флагов, указывающих на то, какие сигналы нужно собирать существует запись ля этого сигнала
 			) {
-				printleader(tcp);
+				printleader(tcp);//Печатаем шапку
 #ifdef WCOREDUMP
-				tprintf("+++ killed by %s %s+++\n",
+				tprintf("+++ killed by %s %s+++\n", //Сообщаем информацию о том, кто убил дочерний процесс
 					signame(WTERMSIG(status)),
 					WCOREDUMP(status) ? "(core dumped) " : "");
 #else
@@ -2295,62 +2356,59 @@ trace(void)
 #endif
 				line_ended();
 			}
-			droptcb(tcp);
-			continue;
+			droptcb(tcp);//Удаляем запись о pid из таблицы
+			continue;//Переход к следующей итерации
 		}
-		if (WIFEXITED(status)) {
+		if (WIFEXITED(status)) {//Процесс завершился?
 			if (pid == strace_child)
-				exit_code = WEXITSTATUS(status);
-			if (cflag != CFLAG_ONLY_STATS &&
-			    qflag < 2) {
-				printleader(tcp);
-				tprintf("+++ exited with %d +++\n", WEXITSTATUS(status));
-				line_ended();
+				exit_code = WEXITSTATUS(status);//Exit-code -- Exit-code  завершенного процесса
+			if (cflag != CFLAG_ONLY_STATS && //Нужно собирать дополнительную информацию CFLAG_ONLY_STATS
+			    qflag < 2) {//Не создавался отдельный файл для каждого треда
+				printleader(tcp);//Печатаем шапку
+				tprintf("+++ exited with %d +++\n", WEXITSTATUS(status));//Сообщаем о завершении процесса
+				line_ended();//Переводим строку
 			}
-			droptcb(tcp);
+			droptcb(tcp);//Удаляем запись о pid из таблиц
 			continue;
 		}
-		if (!WIFSTOPPED(status)) {
+		if (!WIFSTOPPED(status)) {//Процесс ... но не был остановлен -- паника
 			fprintf(stderr, "PANIC: pid %u not stopped\n", pid);
-			droptcb(tcp);
+			droptcb(tcp);//Удаляем запись о pid из таблиц
 			continue;
 		}
 
-		/* Is this the very first time we see this tracee stopped? */
+		//Этот процесс был остановлен впервые?
 		if (tcp->flags & TCB_STARTUP) {
-			if (debug_flag)
+			if (debug_flag)//Сообщаем об инициализации
 				fprintf(stderr, "pid %d has TCB_STARTUP, initializing it\n", tcp->pid);
 			tcp->flags &= ~TCB_STARTUP;
-			if (tcp->flags & TCB_BPTSET) {
-				/*
-				 * One example is a breakpoint inherited from
-				 * parent through fork().
-				 */
-				if (clearbpt(tcp) < 0) {
-					/* Pretty fatal */
-					droptcb(tcp);
-					exit_code = 1;
+			if (tcp->flags & TCB_BPTSET) {//Процесс остановился в брейкпоинте после fork?
+				if (clearbpt(tcp) < 0) {//Удалось продолжеть процесс после брейкпоинта?
+					/* Не удалось -- это фатально */
+					droptcb(tcp);//Удаляем запись о процессе из таблице
+					exit_code = 1;//Возникла ошибка
 					return;
 				}
 			}
-			if (!use_seize && ptrace_setoptions) {
-				if (debug_flag)
+
+			if (!use_seize && ptrace_setoptions) {//Не используется опция sieze  и ptrace устанавливает не пустые опции процессам?
+				if (debug_flag)//Отладочная инф-я
 					fprintf(stderr, "setting opts 0x%x on pid %d\n", ptrace_setoptions, tcp->pid);
-				if (ptrace(PTRACE_SETOPTIONS, tcp->pid, NULL, ptrace_setoptions) < 0) {
+				if (ptrace(PTRACE_SETOPTIONS, tcp->pid, NULL, ptrace_setoptions) < 0) {//Устанавливаем требуемые опции
 					if (errno != ESRCH) {
 						/* Should never happen, really */
-						perror_msg_and_die("PTRACE_SETOPTIONS");
+						perror_msg_and_die("PTRACE_SETOPTIONS");//Возникла ошибка, хотя процесс существует -- умираем
 					}
 				}
 			}
 		}
 
-		sig = WSTOPSIG(status);
+		sig = WSTOPSIG(status);//Процесс остановился из-за возникновения сигнала, если мы добрались досюда
 
-		if (event != 0) {
+		if (event != 0) {//Возник какой-то ptrace event?
 			/* Ptrace event */
 #if USE_SEIZE
-			if (event == PTRACE_EVENT_STOP) {
+			if (event == PTRACE_EVENT_STOP) {//STOP-событие?
 				/*
 				 * PTRACE_INTERRUPT-stop or group-stop.
 				 * PTRACE_INTERRUPT-stop has sig == SIGTRAP here.
@@ -2361,11 +2419,11 @@ trace(void)
 				 || sig == SIGTTOU
 				) {
 					stopped = 1;
-					goto show_stopsig;
+					goto show_stopsig;//Выводим сообщение о возникновении SIGSTOP
 				}
 			}
 #endif
-			goto restart_tracee_with_sig_0;
+			goto restart_tracee_with_sig_0;//Перезапускаем отслеживаемый процесс
 		}
 
 		/* Is this post-attach SIGSTOP?
@@ -2373,53 +2431,64 @@ trace(void)
 		 * with STOPSIG equal to some other signal
 		 * than SIGSTOP if we happend to attach
 		 * just before the process takes a signal.
+		 *
+		 * Был ли это SIGSTOP, вызванный из-за присоединения к нему ptrace?
+		 * Интересно, что процесс может остановиться с
+		 * STOPSIG, эквивалентным какому-то другому сигналу и следовательно
+		 * SIGSTOP, если мы хотели присоединиться к процессу сразу
+		 * после того, как он принял сигнал
 		 */
-		if (sig == SIGSTOP && (tcp->flags & TCB_IGNORE_ONE_SIGSTOP)) {
+		if (sig == SIGSTOP && (tcp->flags & TCB_IGNORE_ONE_SIGSTOP)) {//В процессе возник SIGSTOP и мы должны проигнорировать один SIGSTOP
 			if (debug_flag)
-				fprintf(stderr, "ignored SIGSTOP on pid %d\n", tcp->pid);
-			tcp->flags &= ~TCB_IGNORE_ONE_SIGSTOP;
-			goto restart_tracee_with_sig_0;
+				fprintf(stderr, "ignored SIGSTOP on pid %d\n", tcp->pid);//Сообщаем, если нужно
+			tcp->flags &= ~TCB_IGNORE_ONE_SIGSTOP;//Убираем флаг
+			goto restart_tracee_with_sig_0;//Перезапускаем отслеживаемый процесс
 		}
-
-		if (sig != syscall_trap_sig) {
+		if (sig != syscall_trap_sig) {//Если не возник trap-сигнал
 			siginfo_t si;
 
 			/* Nonzero (true) if tracee is stopped by signal
 			 * (as opposed to "tracee received signal").
-			 * TODO: shouldn't we check for errno == EINVAL too?
+			 * TOD: shouldn't we check for errno == EINVAL too?
 			 * We can get ESRCH instead, you know...
 			 */
-			stopped = (ptrace(PTRACE_GETSIGINFO, pid, 0, (long) &si) < 0);
+			stopped = (ptrace(PTRACE_GETSIGINFO, pid, 0, (long) &si) < 0);//True, если отслеживаемый процесс был остановлен сигналом
 #if USE_SEIZE
  show_stopsig:
 #endif
-			if (cflag != CFLAG_ONLY_STATS
-			    && !hide_log_until_execve
-			    && (qual_flags[sig] & QUAL_SIGNAL)
+			if (cflag != CFLAG_ONLY_STATS //Нужно собирать дополнительную инф-ю в соответствии  с CFLAG_ONLY_STATS?
+			    && !hide_log_until_execve //И мы не прячем лог
+			    && (qual_flags[sig] & QUAL_SIGNAL)//И этот сигнал должжен отслеживаться
 			   ) {
-				printleader(tcp);
+				printleader(tcp);//Печатаем шапку
 				if (!stopped) {
 					tprintf("--- %s ", signame(sig));
-					printsiginfo(&si, verbose(tcp));
+					printsiginfo(&si, verbose(tcp));//Выводем информацию о сигнале, если процесс не был остановлен
 					tprints(" ---\n");
 				} else
 					tprintf("--- stopped by %s ---\n",
-						signame(sig));
-				line_ended();
+						signame(sig));//Иначе выводим инф-ю о сигнале, который остановил процесс
+				line_ended();//Новая строка
 			}
 
-			if (!stopped)
+			if (!stopped)//Процесс не остановлен
 				/* It's signal-delivery-stop. Inject the signal */
-				goto restart_tracee;
+				goto restart_tracee;//Перезапускаем процесс
 
 			/* It's group-stop */
-			if (use_seize) {
+			if (use_seize) {//Групповая остановка?
 				/*
 				 * This ends ptrace-stop, but does *not* end group-stop.
 				 * This makes stopping signals work properly on straced process
 				 * (that is, process really stops. It used to continue to run).
 				 */
-				if (ptrace_restart(PTRACE_LISTEN, tcp, 0) < 0) {
+				/*Разблокируем наблюдаемый процесс, но не отменяем групповую остановку
+				 * Это позволяет останавливающему сигналу нормельно отработать на
+				 * отслеживающих процисаах
+				 * (процесс реально остановлен. но вызов приведет к продолжению работы)
+				 * */
+
+				if (ptrace_restart(PTRACE_LISTEN, tcp, 0) < 0) {//Разблокируем процесс
 					/* Note: ptrace_restart emitted error message */
 					exit_code = 1;
 					return;
@@ -2431,6 +2500,7 @@ trace(void)
 		}
 
 		/* We handled quick cases, we are permitted to interrupt now. */
+		/* Нужно прервать работу?*/
 		if (interrupted)
 			return;
 
@@ -2476,7 +2546,7 @@ main(int argc, char *argv[])
 	fflush(NULL);//Для всех потоков запись всех, еще не записанных данных на диск
 	if (shared_log != stderr) //Закрытие shared_log, если он связан не с stderr
 		fclose(shared_log);
-	if (popen_pid) {//TODO Выяснить, для чего нужен popen_pid
+	if (popen_pid) {//Если был открыт процесс для записи в файл
 		while (waitpid(popen_pid, NULL, 0) < 0 && errno == EINTR)//Цикл ожидания завершения процесса popen_pid
 			;//Данный цикл продолжается до тех пор, пока waitpid возвращает ошибку EINTR
 	}
